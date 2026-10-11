@@ -1,0 +1,152 @@
+# 构建流水线：任何时候都能拿到 arm64 + amd64 的镜像与二进制，不依赖打 tag。
+#
+# 与 release.yml 的分工：
+#   - build.yml（本文件）：**验证与自检**。push / PR / 手动触发都跑，
+#     产出物放 artifact，默认**不推镜像**、不建 Release —— 推代码时不受影响，
+#     PR 上也能确认双架构真的编得出来。
+#   - release.yml：真正的**发布**。推 v* tag 才推 ghcr.io 镜像并建 GitHub Release。
+#
+# 为什么镜像默认不推：GHCR 包默认跟随仓库可见性，一次误推就把镜像公开了；
+# 而「能不能编出 arm64」这件事，用 workflow_dispatch 的 push 开关验证就够了，
+# 不需要每次提交都往 registry 里塞新层。
+#
+# 手动触发并推镜像：Actions 页 → Build → Run workflow → push_image 勾 true
+name: Build
+
+on:
+  push:
+    branches: ["**"]
+    tags-ignore: ["v*"]     # v* tag 交给 release.yml，这里不重复跑
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      push_image:
+        description: "把多架构镜像推到 ghcr.io"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  packages: write            # 仅 workflow_dispatch 勾选 push_image 时用得上
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # ── 1. 静态检查与测试（先跑，红了就没必要编包）──
+  verify:
+    name: gofmt / vet / test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+
+      - name: gofmt
+        run: |
+          out=$(gofmt -l . | grep -v '^reference/' || true)
+          if [ -n "$out" ]; then echo "这些文件没格式化："; echo "$out"; exit 1; fi
+
+      - name: vet
+        run: go vet ./...
+
+      - name: test
+        run: CGO_ENABLED=0 go test ./...
+
+  # ── 2. 二进制：linux/amd64 + linux/arm64 交叉编译 ──
+  # 交叉编译不需要模拟器：Go 自身产出目标架构的可执行文件，
+  # 只有跑起来才需要对应架构的机器，所以这里纯编译不做执行验证。
+  binaries:
+    name: 二进制 arm64 + amd64
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+
+      # 版本号：有 tag 用 tag，否则用短 SHA（让每个包都自带可追溯的版本）
+      - name: 决定版本号
+        id: ver
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            ver="${GITHUB_REF_NAME#v}"
+          else
+            ver="0.0.0-dev.${GITHUB_SHA::7}"
+          fi
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+          echo "→ $ver"
+
+      - name: 构建发布包
+        run: bash scripts/build-release.sh "${{ steps.ver.outputs.version }}"
+
+      # 编出来的架构对不对，肉眼看不见 —— 明确验一遍，
+      # 免得 arm64 包其实还是 amd64 混进发布资产。
+      - name: 校验产物架构
+        run: |
+          set -euo pipefail
+          ver="${{ steps.ver.outputs.version }}"
+          for arch in amd64 arm64; do
+            tar xzf "dist/lightcat-${ver}-linux-${arch}.tar.gz" -O "lightcat-${ver}-linux-${arch}/lightcat" > "/tmp/lightcat-${arch}"
+            got=$(file -b "/tmp/lightcat-${arch}")
+            case "$arch:$got" in
+              amd64:*x86-64*)  echo "✓ amd64 包：$got" ;;
+              arm64:*aarch64*) echo "✓ arm64 包：$got" ;;
+              *) echo "✗ $arch 包架构不对：$got"; exit 1 ;;
+            esac
+          done
+
+      - name: 上传二进制产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: lightcat-binaries-${{ steps.ver.outputs.version }}
+          path: |
+            dist/*.tar.gz
+            dist/SHA256SUMS
+          if-no-files-found: error
+
+  # ── 3. 镜像：linux/amd64 + linux/arm64 ──
+  # 不需要 qemu：Dockerfile 构建段固定在 runner 架构上跑（--platform=$BUILDPLATFORM），
+  # Go 交叉编译产出目标架构二进制，arm64 层只是把 alpine 基座套上去。
+  image:
+    name: 镜像 arm64 + amd64
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # 手动触发且勾了 push_image 才登录 —— 默认构建路径完全不碰 registry
+      - name: 登录 ghcr.io
+        if: inputs.push_image == true
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ inputs.push_image == true }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
