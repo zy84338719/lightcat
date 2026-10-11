@@ -126,7 +126,8 @@
 
   <h2>{{T "最近任务"}}</h2>
   {{if .Tasks}}
-  <table>
+  <div class="tablewrap">
+  <table class="zebra">
     <thead><tr><th>#</th><th>{{T "类型"}}</th><th>{{T "状态"}}</th><th>{{T "结果"}}</th><th>{{T "创建"}}</th><th>{{T "完成"}}</th></tr></thead>
     <tbody>
       {{range .Tasks}}
@@ -135,12 +136,13 @@
         <td class="mono">{{.Kind}}</td>
         <td><span class="badge {{.Status}}">{{.Status}}</span></td>
         <td class="mono">{{if .Result}}{{.Result}}{{else}}-{{end}}</td>
-        <td class="mono">{{fmtTime .CreatedAt}}</td>
-        <td class="mono">{{fmtTime .FinishedAt}}</td>
+        <td class="mono nowrap">{{fmtTime .CreatedAt}}</td>
+        <td class="mono nowrap">{{fmtTime .FinishedAt}}</td>
       </tr>
       {{end}}
     </tbody>
   </table>
+  </div>
   {{else}}
   <div class="empty">{{T "暂无任务"}}</div>
   {{end}}

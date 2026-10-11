@@ -36,7 +36,8 @@
   {{end}}
 
   {{if .Presets}}
-  <table>
+  <div class="tablewrap">
+  <table class="zebra">
     <thead>
       <tr>
         <th>{{T "名称"}}</th>
@@ -72,6 +73,7 @@
       {{end}}
     </tbody>
   </table>
+  </div>
   <div class="hint">{{T "共 %d 条" (len .Presets)}}</div>
   {{else}}
   <div class="empty">{{T "还没有预设。下面建一条：比如「首次纳管时把周期上报间隔写成 300 秒」。"}}</div>

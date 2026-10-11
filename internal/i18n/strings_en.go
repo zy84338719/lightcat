@@ -695,3 +695,20 @@ func init() {
 		"升级：重新下载对应架构的发布包覆盖二进制即可，无数据库迁移。": "Upgrading: download the release package for your architecture and replace the binary — no database migration.",
 	})
 }
+
+// 空状态全面升级后带进来的词条（图标 + 标题 + 说明三段式）。
+func init() {
+	Register(map[string]string{
+		"还没有采集到 WiFi 信息":     "No Wi-Fi data yet",
+		"还没有采集到参数":           "No parameters collected yet",
+		"已探测到子设备对象，但还没采集到内容": "Sub-device objects detected, but nothing collected yet",
+		"等设备下次 Inform 后这里会显示每个子设备的型号、MAC 与在线终端数。": "Each sub-device's model, MAC and client count will appear here after the device's next Inform.",
+		"等设备下次上报，或点上面的「重新获取设备信息」。":                "Wait for the next Inform, or use “Refresh device info” above.",
+		"这里记录所有下发到设备的指令与它的执行结果。":                  "Every command sent to the device and its outcome are recorded here.",
+		"暂无上报记录": "No Inform records",
+		"设备每次 Inform（TR-069 主动上报）都会在这里留下一条。": "Each Inform from the device (a TR-069 report) leaves an entry here.",
+		"文件库是空的": "The file library is empty",
+		"上传一份固件或配置文件后，就能下发给设备（设备自己来拉 URL）。": "Upload a firmware or config file, then you can push it to devices (the device fetches the URL itself).",
+		"查看接入步骤": "See the onboarding steps",
+	})
+}

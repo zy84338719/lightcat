@@ -164,20 +164,22 @@
   {{/* 告警与筛选无关：筛选视图（在线/离线/搜索/标签）只许出现筛选命中的设备，
        连告警里引用的设备链接都不行（e2e 对「筛不到」是整页断言）。 */}}
   <h2>{{icon "bell"}}{{T "最近告警"}}</h2>
-  <table>
+  <div class="tablewrap">
+  <table class="zebra">
     <thead>
       <tr><th>{{T "时间"}}</th><th>{{T "设备"}}</th><th>{{T "内容"}}</th></tr>
     </thead>
     <tbody>
       {{range .RecentAlerts}}
       <tr>
-        <td class="mono hint">{{fmtTime .At}}</td>
+        <td class="mono nowrap hint">{{fmtTime .At}}</td>
         <td><a href="/devices/{{.DeviceID}}" class="mono">{{if .Serial}}{{.Serial}}{{else}}#{{.DeviceID}}{{end}}</a>{{if .Model}} <span class="hint">{{.Model}}</span>{{end}}</td>
         <td><span class="badge {{if or (eq .Kind "offline") (eq .Kind "optic_down")}}failed{{else}}probing{{end}}">{{TS .KindLabel}}</span> {{TS .Message}}</td>
       </tr>
       {{end}}
     </tbody>
   </table>
+  </div>
   <div class="hint" style="margin-top:-4px"><a href="/alerts">{{T "查看全部告警"}}</a></div>
   {{end}}
 
@@ -188,7 +190,8 @@
     {{else if ne .State "all"}}（{{T "当前只显示筛选出来的设备）"}}{{end}}
   </div>
   {{if .WiFi}}
-  <table>
+  <div class="tablewrap">
+  <table class="zebra">
     <thead>
       <tr>
         <th>{{T "设备"}}</th><th>{{T "频段"}}</th><th>SSID</th><th>{{T "射频"}}</th>
@@ -206,29 +209,33 @@
           {{end}}
           <td><a href="/devices/{{$d.ID}}/wifi/{{$b.Instance}}"><b>{{$b.Label}}</b></a>{{if $b.Note}} <span class="hint">{{$b.Note}}</span>{{end}}</td>
           <td class="mono">{{if $b.SSID}}<a href="/devices/{{$d.ID}}/wifi/{{$b.Instance}}">{{$b.SSID}}</a>{{else}}<span class="hint">-</span>{{end}}</td>
-          <td>
+          <td class="nowrap">
             {{if $b.HaveOn}}
               {{if $b.On}}<span class="badge on">{{T "开"}}</span>{{else}}<span class="badge off">{{T "关"}}</span>{{end}}
             {{else if $b.Status}}
               <span class="badge off">{{$b.Status}}</span>
             {{else}}<span class="hint">-</span>{{end}}
           </td>
-          <td class="mono">{{if $b.Channel}}{{$b.Channel}}{{else}}-{{end}}</td>
-          <td class="mono">{{if $b.Standard}}{{$b.Standard}}{{else}}-{{end}}</td>
-          <td class="mono">{{if $b.Security}}{{$b.Security}}{{else}}-{{end}}</td>
-          <td class="mono">{{if $b.Clients}}{{$b.Clients}}{{else}}-{{end}}</td>
-          <td class="mono hint">{{fmtTimeShort $b.Updated}}</td>
+          <td class="mono nowrap">{{if $b.Channel}}{{$b.Channel}}{{else}}-{{end}}</td>
+          <td class="mono nowrap">{{if $b.Standard}}{{$b.Standard}}{{else}}-{{end}}</td>
+          <td class="mono nowrap">{{if $b.Security}}{{$b.Security}}{{else}}-{{end}}</td>
+          <td class="mono nowrap num">{{if $b.Clients}}{{$b.Clients}}{{else}}-{{end}}</td>
+          <td class="mono nowrap hint">{{fmtTimeShort $b.Updated}}</td>
         </tr>
         {{end}}
       {{end}}
       {{end}}
     </tbody>
   </table>
+  </div>
   {{else}}
   <div class="empty">
-    {{T "还没有采集到 WiFi 信息。"}}<br>
-    {{T "设备首次纳管或上报"}} <span class="mono">0 BOOTSTRAP</span> {{T "时会自动采集；"}}
-    {{T "也可以点上面列表里的「采集 WiFi」，或在设备详情页点「重新采集无线概况」。"}}
+    <span class="empty-ico">{{icon "wifi"}}</span>
+    <div class="empty-title">{{T "还没有采集到 WiFi 信息"}}</div>
+    <div class="empty-body">
+      {{T "设备首次纳管或上报"}} <span class="mono">0 BOOTSTRAP</span> {{T "时会自动采集；"}}
+      {{T "也可以点上面列表里的「采集 WiFi」，或在设备详情页点「重新采集无线概况」。"}}
+    </div>
   </div>
   {{end}}
 </main>
