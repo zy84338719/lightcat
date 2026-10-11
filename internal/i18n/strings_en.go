@@ -712,3 +712,21 @@ func init() {
 		"查看接入步骤": "See the onboarding steps",
 	})
 }
+
+// 设置页保存后的提示条（后端把中文原文塞进 ?msg=，模板用 {{TS}} 翻译）。
+// 这批原先一个都没翻 —— 英文界面下改端口 / 改密码 / 设 token 都会露出中文，
+// 而这几个正是管理员最常做的动作。docs/notes/i18n.md 记着这处遗留，这里补齐。
+func init() {
+	Register(map[string]string{
+		"已保存":          "Saved",
+		"已保存。":         "Saved.",
+		"ACS 监听地址不能为空": "The ACS listen address cannot be empty",
+		"面板账号要 2–32 位，只能用字母、数字与 . _ - @": "Panel username must be 2–32 characters: letters, digits and . _ - @ only",
+		"密码至少 6 位":                           "Password must be at least 6 characters",
+		"两次输入的密码不一样":                         "The two passwords do not match",
+		"启用了账号密码保护，就得设一个密码":                  "Enabling password protection requires setting a password",
+		"API Token 太短：至少 16 位（点「生成」可以现场造一个）": "API token too short: at least 16 characters (use “Generate” to create one)",
+		"API Token 不能包含空白字符":                 "API token cannot contain whitespace",
+		"API Token 要么填新值、要么勾选清除，不能同时":        "Set a new token or tick “clear”, not both",
+	})
+}
