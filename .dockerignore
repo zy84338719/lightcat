@@ -1,0 +1,32 @@
+# 构建上下文只需要 cmd/ internal/ go.mod go.sum；其余一律排除，
+# 尤其 reference/（第三方源码 + node_modules）和 dist/，否则上下文几百 MB。
+.git
+.github
+.gitignore
+.mimosa
+.idea
+.vscode
+reference
+dist
+data
+files
+bin
+docs
+scripts
+test
+deploy
+cpesim
+lightcat
+acs
+*.db
+*.db-shm
+*.db-wal
+*.log
+*.tar.gz
+*.tgz
+*.zip
+Dockerfile
+docker-compose.yml
+README*.md
+CONTRIBUTING*.md
+LICENSE

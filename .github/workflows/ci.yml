@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+
+      - name: gofmt
+        run: |
+          out=$(gofmt -l . | grep -v '^reference/' || true)
+          if [ -n "$out" ]; then echo "这些文件没格式化："; echo "$out"; exit 1; fi
+
+      - name: vet
+        run: go vet ./...
+
+      - name: test
+        run: CGO_ENABLED=0 go test ./...
+
+      - name: build
+        run: CGO_ENABLED=0 go build ./cmd/lightcat && CGO_ENABLED=0 go build ./test/cpesim
+
+  manifests:
+    name: K8s manifests 校验
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: kubeconform（strict：字段拼错/类型不对都会拦）
+        run: |
+          curl -sSL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | tar xz
+          ls deploy/k8s/*.yaml | grep -v kustomization | xargs ./kubeconform -strict -summary
+
+  docker-image:
+    name: 镜像可构建性
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # 只构建不推送：Dockerfile 坏了在 CI 就拦住，不用等发版
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

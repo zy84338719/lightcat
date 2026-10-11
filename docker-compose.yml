@@ -1,0 +1,42 @@
+# LightCat 光猫管家 —— Docker Compose 部署
+#
+# 首次启动（面板密码必填，防止误把无鉴权面板开进局域网）：
+#   LIGHTCAT_PASS='你的强密码' docker compose up -d
+# 注意 :? 校验对所有子命令生效，down/logs 等也要带上变量：
+#   LIGHTCAT_PASS=x docker compose down
+#
+# 启动后：
+#   面板  http://<本机IP>:8080/          账号默认 admin
+#   CWMP  光猫里把 ACS URL 指向 http://<本机IP>:7547/acs
+#
+# 数据都在 ./data（SQLite 库 + 上传的固件），备份 = 拷走这个目录。
+# 全部可调环境变量见 deploy/DOCKER.md；K8s 部署见 deploy/k8s/。
+services:
+  lightcat:
+    # 默认本地构建；发布到镜像仓库后可删掉 build、把 image 换成仓库地址
+    build: .
+    image: lightcat:local
+    container_name: lightcat
+    restart: unless-stopped
+    ports:
+      - "7547:7547"   # CWMP（设备侧）：光猫 ACS URL 填 http://<本机IP>:7547/acs
+      - "8080:8080"   # Web 面板（管理侧）
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      ACS_LISTEN: ":7547"
+      ACS_WEB_LISTEN: ":8080"       # 面板独立端口；留空则与 CWMP 共用 7547（单端口模式）
+      ACS_DB: /data/lightcat.db
+      ACS_FILES_DIR: /data/files
+      # 面板账号只在**首次启动**种一次（存进数据库）；之后改密码走面板「设置」页，
+      # 改这里的环境变量不会生效。
+      ACS_WEB_USER: ${LIGHTCAT_USER:-admin}
+      ACS_WEB_PASS: ${LIGHTCAT_PASS:?请先设置面板密码：LIGHTCAT_PASS='...' docker compose up -d}
+      # /api 与 /metrics 的 Bearer token（可选；脚本与 Prometheus 抓取用）
+      ACS_API_TOKEN: ${LIGHTCAT_API_TOKEN:-}
+      # ACS 自身对外 URL：固件远程升级时下发给光猫的文件地址基于它，
+      # 必须填**光猫能访问到**的地址（例：http://192.168.1.10:7547）
+      ACS_URL: ${LIGHTCAT_ACS_URL:-}
+      # 健康检查走面板端口：CWMP 专用端口对 GET 一律 405（协议只收 POST），不能探活
+      LIGHTCAT_HEALTH_PORT: "8080"
+    volumes:
+      - ./data:/data

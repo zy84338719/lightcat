@@ -1,0 +1,19 @@
+# 一键部署：kubectl apply -k deploy/k8s/ -n lightcat
+# 前置：命名空间与 Secret 已创建（见 deploy/K8S.md）。
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - configmap.yaml
+  - statefulset.yaml
+  - service-cwmp.yaml
+  - service-panel.yaml
+# 可选资源（按需取消注释）：
+#  - secret.example.yaml   # 不建议：示例占位密码别进 Git 流；用命令创建（deploy/K8S.md）
+#  - ingress.yaml          # 域名 + Ingress 暴露面板（先改 host）
+
+# 用镜像仓库时覆盖镜像地址（或命令行 kustomize edit set image …）：
+# images:
+#   - name: lightcat
+#     newName: ghcr.io/<你的名>/lightcat
+#     newTag: v1.3.0

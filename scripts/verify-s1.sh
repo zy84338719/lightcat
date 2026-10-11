@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# S1 验收脚本：编译真实的二进制、起真实的 HTTP + SQLite，用真实的报文跑一遍。
+#
+# 用法: scripts/verify-s1.sh
+# 依赖: go、python3
+set -uo pipefail
+
+cd "$(dirname "$0")/.."
+ROOT=$(pwd)
+
+# 找一个空闲端口
+PORT=${ACS_TEST_PORT:-17547}
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/acs-verify-XXXXXX")
+DB="$WORK/lightcat.db"
+LOG="$WORK/lightcat.log"
+
+if ! command -v go >/dev/null 2>&1; then
+  export PATH="$HOME/.local/go/bin:$PATH"
+fi
+
+cleanup() {
+  if [ -n "${ACSPID:-}" ]; then
+    kill "$ACSPID" 2>/dev/null
+    wait "$ACSPID" 2>/dev/null
+  fi
+  if [ "${KEEP:-0}" != "1" ]; then rm -rf "$WORK"; fi
+}
+trap cleanup EXIT
+
+echo "== 编译 =="
+export CGO_ENABLED=0
+go build -o "$WORK/lightcat" ./cmd/lightcat || exit 1
+go build -o "$WORK/cpesim" ./test/cpesim || exit 1
+echo "  到 $WORK"
+
+echo "== 起 ACS（端口 ${PORT}，库 ${DB}）=="
+# 端口必须干净：被占时自己的实例会 bind 失败，而就绪探测会被**占用者**应答 ——
+# 整个验收就静默打到别的服务器上了（测完还以为是绿的）。宁可当场炸。
+# 换端口：ACS_TEST_PORT=17999 bash scripts/verify-s1.sh
+if curl -s -o /dev/null --max-time 1 "http://127.0.0.1:${PORT}/" 2>/dev/null; then
+  echo "端口 ${PORT} 已有服务在监听 —— 先停掉它，或 ACS_TEST_PORT=<别的端口> 重跑" >&2
+  exit 2
+fi
+# 固定 ConnectionRequest 凭据：让「主动唤醒」的 Digest 那条能被确定性地测到
+# ACS_TASK_HISTORY_LIMIT 调小一点（默认 500）：让「任务历史裁剪」在验收里真的被触发
+# ACS_ALERT_RX_LOW=-10：38 节那台设备报的收光是 -15.95 dBm，压低阈值让告警真的触发（41 节验收）
+ACS_CONNREQ_USER=acs ACS_CONNREQ_PASS=verify-connreq-pass \
+  ACS_TASK_HISTORY_LIMIT=20 ACS_INFORM_HISTORY_LIMIT=20 \
+  ACS_ALERT_RX_LOW=-10 \
+  ACS_WEB_USER=acsweb ACS_WEB_PASS=verify-panel-pass \
+  ACS_LISTEN=":$PORT" ACS_DB="$DB" ACS_LOG_LEVEL=info \
+  "$WORK/lightcat" >"$LOG" 2>&1 &
+ACSPID=$!
+
+# 等服务起来（最多 10 秒）。注意用 CWMP 端点探活：面板那侧启用了账号密码保护，
+# 不带凭据访问 / 会得到 401（curl -f 会当成失败）。
+for i in $(seq 1 50); do
+  if curl -fsS -o /dev/null -X POST -H 'Content-Type: text/xml' --data '<x/>' \
+       "http://127.0.0.1:$PORT/acs" 2>/dev/null; then break; fi
+  sleep 0.2
+done
+if ! curl -fsS -o /dev/null -X POST -H 'Content-Type: text/xml' --data '<x/>' \
+     "http://127.0.0.1:$PORT/acs" 2>/dev/null; then
+  echo "ACS 没能起来，日志："
+  cat "$LOG"
+  exit 1
+fi
+echo "  已就绪"
+
+echo
+ACS_VERIFY_AUTH="acsweb:verify-panel-pass" \
+  python3 "$ROOT/scripts/verify_s1.py" "http://127.0.0.1:$PORT" "$WORK"
+RC=$?
+
+echo
+if [ "$RC" != "0" ]; then
+  echo "== ACS 日志（末尾 60 行）=="
+  tail -n 60 "$LOG"
+else
+  echo "== ACS 日志（末尾 15 行）=="
+  tail -n 15 "$LOG"
+fi
+echo
+if [ "$RC" = "0" ]; then
+  echo "S1 验收全部通过"
+else
+  echo "S1 验收存在失败项"
+fi
+exit $RC

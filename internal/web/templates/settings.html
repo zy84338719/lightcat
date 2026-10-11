@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%2357aeff'/%3E%3Cstop offset='1' stop-color='%237c8fff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='16' fill='url%28%23g%29'/%3E%3Cline x1='21' y1='33' x2='15' y2='17' stroke='white' stroke-width='4.5' stroke-linecap='round'/%3E%3Cline x1='43' y1='33' x2='49' y2='17' stroke='white' stroke-width='4.5' stroke-linecap='round'/%3E%3Crect x='12' y='33' width='40' height='15' rx='5' fill='white'/%3E%3Ccircle cx='20' cy='40.5' r='2' fill='%233f6fe0'/%3E%3Ccircle cx='27' cy='40.5' r='2' fill='%233f6fe0'/%3E%3Crect x='33' y='38.8' width='13' height='3.4' rx='1.7' fill='%233f6fe0' opacity='.55'/%3E%3C/svg%3E">
+<meta name="color-scheme" content="dark light">
+<title>{{T "设置 · LightCat 光猫管家"}}</title>
+<link rel="stylesheet" href="/static/style.css">
+<script>
+  // 在样式生效之前把主题定下来，避免刷新时先闪一下暗色
+  (function () {
+    try {
+      var t = localStorage.getItem("theme");
+      if (t !== "light" && t !== "dark") {
+        t = (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches)
+          ? "light" : "dark";
+      }
+      document.documentElement.setAttribute("data-theme", t);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "dark");
+    }
+  })();
+</script>
+</head>
+<body>
+{{template "topnav" .}}
+
+<main>
+  <h2>{{icon "sliders"}}{{T "设置"}}</h2>
+  {{if .Notice}}
+  <div class="notice {{if not .NoticeErr}}ok{{end}}">{{TS .Notice}}</div>
+  {{end}}
+
+  <table class="kv">
+    <tbody>
+      <tr>
+        <th>ACS {{T "监听（CWMP）"}}</th>
+        <td class="mono">{{.Runtime.ACSListen}}</td>
+      </tr>
+      <tr>
+        <th>{{T "面板监听"}}</th>
+        <td class="mono">{{if .Runtime.WebListen}}{{.Runtime.WebListen}}{{else}}{{T "与 ACS 同一端口"}}{{end}}</td>
+      </tr>
+      <tr>
+        <th>{{T "访问控制"}}</th>
+        <td>
+          {{if .WebAuth}}<span class="badge on">{{T "已启用"}}</span> <span class="mono">{{.WebUser}}</span>
+          {{else}}<span class="badge off">{{T "未启用"}}</span>{{end}}
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  {{if .PendingPorts}}
+  <div class="notice" style="margin-top:12px">
+    <div>{{T "监听地址已保存，重启服务后生效。"}}</div>
+    <div class="hint" style="margin:6px 0">{{T "重启只断几秒；新端口起不来会自动退回旧地址。设备侧配的 ACS 地址若也改了，记得同步改。"}}</div>
+    {{if .CanRestart}}
+    <form method="post" action="/settings/restart" style="margin-top:8px"
+          data-confirm='{{T "确定现在重启服务吗？重启期间面板会短暂断开。"}}'>
+      <button type="submit">{{T "立即重启服务"}}</button>
+      <span class="hint">{{T "也可以稍后自己重启。"}}</span>
+    </form>
+    {{else}}
+    <div class="hint" style="margin-top:8px">{{T "重启用你自己平时的办法：systemctl restart acs 或脚本里的 restart。"}}</div>
+    {{end}}
+  </div>
+  {{end}}
+
+  <form method="post" action="/settings" class="wform" style="margin-top:22px">
+    <h3>{{T "监听地址"}}</h3>
+    <div class="wrow">
+      <div class="wlabel">ACS {{T "监听（CWMP）"}}</div>
+      <div class="winput"><input type="text" name="acs_listen" value="{{.StoredListen}}" placeholder=":9090"></div>
+    </div>
+    <div class="wrow">
+      <div class="wlabel">{{T "面板监听"}}</div>
+      <div class="winput"><input type="text" name="web_listen" value="{{.StoredWebListen}}" placeholder='{{T "与 ACS 同一端口"}}'></div>
+    </div>
+
+    <h3>{{T "访问控制"}}</h3>
+    <div class="wrow">
+      <div class="wlabel">{{T "账号密码保护"}}</div>
+      <div class="winput">
+        <label class="chk">
+          <input type="checkbox" name="auth" value="1" {{if .WebAuth}}checked{{end}}>
+          <span>{{T "启用"}}</span>
+        </label>
+      </div>
+    </div>
+    <div class="wrow">
+      <div class="wlabel">{{T "账号"}}</div>
+      <div class="winput"><input type="text" name="web_user" value="{{.WebUser}}" placeholder="admin"></div>
+    </div>
+    <div class="wrow">
+      <div class="wlabel">{{T "新密码"}}</div>
+      <div class="winput">
+        <input type="password" name="web_pass" value="" placeholder="{{if .HasPassword}}{{T "留空表示不修改"}}{{else}}{{T "至少 6 位"}}{{end}}">
+      </div>
+    </div>
+    <div class="wrow">
+      <div class="wlabel">{{T "确认密码"}}</div>
+      <div class="winput"><input type="password" name="web_pass2" value=""></div>
+    </div>
+
+    <h3>{{T "Prometheus / API Token"}}</h3>
+    <div class="wrow">
+      <div class="wlabel">{{T "API Token"}}</div>
+      <div class="winput" style="display:flex;gap:8px;align-items:center">
+        <input type="text" name="api_token" value="" autocomplete="off" spellcheck="false" style="flex:1"
+               placeholder='{{if .APITokenSet}}{{T "留空表示不修改"}}{{else}}{{T "留空表示不启用"}}{{end}}'>
+        <button type="button" class="ghost" id="gen-token"
+                title='{{T "生成 36 位随机密钥填入"}}'>{{T "生成"}}</button>
+      </div>
+    </div>
+    <div class="wrow">
+      <div class="wlabel"></div>
+      <div class="winput">
+        <label class="chk">
+          <input type="checkbox" name="api_token_clear" value="1">
+          <span>{{T "清除已保存的 Token（回落到启动参数 -api-token 的值）"}}</span>
+        </label>
+      </div>
+    </div>
+    <div class="hint" style="margin:-4px 0 10px 104px">
+      {{T "Token 给 /api/* 与 /metrics 用（Bearer 方式）；保存在本机数据库，改完立即生效，不用重启。"}}
+    </div>
+
+    <div class="wrow">
+      <div class="wlabel"></div>
+      <div class="winput"><button type="submit">{{T "保存"}}</button></div>
+    </div>
+  </form>
+
+  <h2>{{icon "activity"}}{{T "Prometheus 监控对接"}}</h2>
+  <table class="kv">
+    <tbody>
+      <tr>
+        <th>{{T "抓取端点"}}</th>
+        <td class="mono">http://{{.MetricsTarget}}/metrics
+          <button type="button" class="copybtn" data-copy="http://{{.MetricsTarget}}/metrics"
+                  title='{{T "复制"}}' aria-label='{{T "复制抓取端点"}}'>⧉</button>
+        </td>
+      </tr>
+      <tr>
+        <th>API Token</th>
+        <td class="mono">
+          {{if eq .APITokenFrom "panel"}}<span class="badge on">{{T "已配置"}}（{{T "来源：面板"}}）</span> {{.APITokenShort}}
+          <button type="button" class="copybtn" data-copy="{{.APIToken}}"
+                  title='{{T "复制"}}' aria-label='{{T "复制 API Token"}}'>⧉</button>
+          {{else if eq .APITokenFrom "flag"}}<span class="badge on">{{T "已配置"}}（{{T "来源：启动参数"}}）</span> {{.APITokenShort}}
+          <button type="button" class="copybtn" data-copy="{{.APIToken}}"
+                  title='{{T "复制"}}' aria-label='{{T "复制 API Token"}}'>⧉</button>
+          {{else}}<span class="badge off">{{T "未配置"}}</span>
+          <span class="hint">{{T "在上面表单里设置，或用启动参数 -api-token；配了之后脚本与 Prometheus 用 Bearer 方式携带。"}}</span>{{end}}
+        </td>
+      </tr>
+      <tr>
+        <th>{{T "配置下载"}}</th>
+        <td>
+          <a class="ghost" href="/settings/prometheus.yml">{{icon "download"}}{{T "下载 Prometheus 抓取配置"}}</a>
+          <a class="ghost" href="/settings/grafana-dashboard.json" style="margin-left:10px">{{icon "download"}}{{T "下载 Grafana 面板 JSON"}}</a>
+          <div class="hint" style="margin-top:6px">
+            {{T "抓取配置里已带上当前 Token（若有），改了 Token 记得重新下载；Grafana 导入：Dashboards → Import，选这份 JSON，数据源选你的 Prometheus。"}}
+          </div>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="hint" style="margin:10px 0">
+    {{T "Prometheus 抓取配置示例（把 127.0.0.1 换成面板实际可达的地址）："}}
+  </div>
+  <pre class="code">scrape_configs:
+  - job_name: lightcat
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["{{.MetricsTarget}}"]{{if .APITokenSet}}
+    authorization:
+      type: Bearer
+      credentials: "{{.APIToken}}"{{end}}</pre>
+  <div class="hint" style="margin:10px 0">{{T "暴露的指标（全部是当前存量 gauge）："}}</div>
+  <table>
+    <thead>
+      <tr><th>{{T "指标"}}</th><th>{{T "含义"}}</th></tr>
+    </thead>
+    <tbody>
+      <tr><td class="mono">lightcat_devices</td><td>{{T "已纳管设备总数"}}</td></tr>
+      <tr><td class="mono">lightcat_devices_online</td><td>{{T "在线设备数"}}</td></tr>
+      <tr><td class="mono">lightcat_devices_probing</td><td>{{T "正在探测的设备数（超期未上报）"}}</td></tr>
+      <tr><td class="mono">lightcat_params_stored</td><td>{{T "已入库参数行数"}}</td></tr>
+      <tr><td class="mono">lightcat_tasks_pending</td><td>{{T "待办任务数（排队等设备会话）"}}</td></tr>
+      <tr><td class="mono">lightcat_tasks_running</td><td>{{T "已下发等待设备应答的任务数"}}</td></tr>
+      <tr><td class="mono">lightcat_tasks_failed</td><td>{{T "失败任务数"}}</td></tr>
+      <tr><td class="mono">lightcat_inform_records_stored</td><td>{{T "Inform 记录条数（按保留上限裁剪）"}}</td></tr>
+      <tr><td class="mono">lightcat_alert_records_stored</td><td>{{T "告警记录条数"}}</td></tr>
+      <tr><td class="mono">lightcat_optical_history_rows</td><td>{{T "光功率历史行数"}}</td></tr>
+    </tbody>
+  </table>
+</main>
+
+<script>window.I18N = {{.I18NJSON}};</script>
+<script src="/static/app.js"></script>
+</body>
+</html>

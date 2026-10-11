@@ -1,0 +1,22 @@
+# CWMP（设备侧）入口：光猫把 ACS URL 指向这个地址。
+#
+# 类型选择：
+#   - LoadBalancer：k3s（内置 servicelb）/ 云集群直接拿到外部地址，最省事；
+#   - 没有 LB 实现就改 NodePort，光猫填 http://<任一节点IP>:<NodePort>/acs；
+#   - 想让公网光猫接入且运营商固件要求 HTTPS：在前面再挂一层 TLS 终结
+#     （或给应用配 ACS_TLS_CERT/ACS_TLS_KEY，证书用 Secret 挂进 /data 之外的只读卷）。
+apiVersion: v1
+kind: Service
+metadata:
+  name: lightcat-cwmp
+  labels:
+    app.kubernetes.io/name: lightcat
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/name: lightcat
+  ports:
+    - name: cwmp
+      port: 7547
+      targetPort: cwmp
+      protocol: TCP

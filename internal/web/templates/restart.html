@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%2357aeff'/%3E%3Cstop offset='1' stop-color='%237c8fff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='16' fill='url%28%23g%29'/%3E%3Cline x1='21' y1='33' x2='15' y2='17' stroke='white' stroke-width='4.5' stroke-linecap='round'/%3E%3Cline x1='43' y1='33' x2='49' y2='17' stroke='white' stroke-width='4.5' stroke-linecap='round'/%3E%3Crect x='12' y='33' width='40' height='15' rx='5' fill='white'/%3E%3Ccircle cx='20' cy='40.5' r='2' fill='%233f6fe0'/%3E%3Ccircle cx='27' cy='40.5' r='2' fill='%233f6fe0'/%3E%3Crect x='33' y='38.8' width='13' height='3.4' rx='1.7' fill='%233f6fe0' opacity='.55'/%3E%3C/svg%3E">
+<meta name="color-scheme" content="dark light">
+<title>{{T "重启中 · LightCat 光猫管家"}}</title>
+<link rel="stylesheet" href="/static/style.css">
+<script>
+  // 在样式生效之前把主题定下来，避免刷新时先闪一下暗色
+  (function () {
+    try {
+      var t = localStorage.getItem("theme");
+      if (t !== "light" && t !== "dark") {
+        t = (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches)
+          ? "light" : "dark";
+      }
+      document.documentElement.setAttribute("data-theme", t);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "dark");
+    }
+  })();
+</script>
+</head>
+<body>
+<header class="top">
+  <h1><a href="/">{{T "LightCat 光猫管家"}}</a></h1>
+</header>
+
+<main>
+  <h2>{{T "正在重启服务"}}</h2>
+
+  <div class="notice ok" id="restart-box"
+       {{if not .SameAddress}}data-restart-url="{{.NewURL}}" data-restart-seconds="{{.AutoSeconds}}"{{end}}>
+    {{if .SameAddress}}
+    <div>{{T "服务已重启，面板地址没有变化，直接刷新即可。"}}</div>
+    {{else}}
+    <div>{{T "服务已重启，面板已迁到新地址："}} <a class="mono" href="{{.NewURL}}">{{.NewURL}}</a></div>
+    <div class="hint" style="margin-top:6px">
+      <span data-restart-count>{{.AutoSeconds}}</span> {{T "秒后自动跳转；没跳的话点上面那个地址。"}}
+    </div>
+    {{end}}
+    <div class="hint" style="margin-top:6px">{{TS .Note}}</div>
+    <div class="hint" style="margin-top:6px">{{T "若新地址一时打不开，稍等几秒再刷新一次。"}}</div>
+  </div>
+
+  <p>
+    {{if .SameAddress}}
+    <a class="btn" href="/">{{T "回到设备列表"}}</a>
+    {{else}}
+    <a class="btn" href="{{.NewURL}}">{{T "现在就过去"}}</a>
+    {{end}}
+  </p>
+</main>
+<script>window.I18N = {{.I18NJSON}};</script>
+<script src="/static/app.js"></script>
+</body>
+</html>

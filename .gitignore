@@ -1,0 +1,37 @@
+# 参考用的第三方源码（clone 而来，不进库）
+/reference/
+
+# 构建产物
+/acs
+/lightcat
+/cpesim
+/bin/
+/dist/
+
+# 安全扫描工具（Mimosa 门禁）：会话状态/账本/策略全是本机运行痕迹，一律不进公开库
+/.mimosa/
+
+# 运行时数据（**含真实设备信息与凭据**，一律不进库）
+/data/
+*.db
+*.db-shm
+*.db-wal
+*.log
+/files/
+
+# 打包 / 备份产物（别把 data/ 混进去）
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.bundle
+
+# hz/protoc 生成物：只服务于路由推导，运行时无人 import（见 idl/lightcat_api.proto 顶部说明）。
+# 需要时跑 hz update 重新生成，不进版本库。
+/biz/model/
+
+# 编辑器与系统
+.idea/
+.vscode/
+*.swp
+.DS_Store
