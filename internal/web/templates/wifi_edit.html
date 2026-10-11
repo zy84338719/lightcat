@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%2357aeff'/%3E%3Cstop offset='1' stop-color='%237c8fff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='16' fill='url%28%23g%29'/%3E%3Cline x1='21' y1='33' x2='15' y2='17' stroke='white' stroke-width='4.5' stroke-linecap='round'/%3E%3Cline x1='43' y1='33' x2='49' y2='17' stroke='white' stroke-width='4.5' stroke-linecap='round'/%3E%3Crect x='12' y='33' width='40' height='15' rx='5' fill='white'/%3E%3Ccircle cx='20' cy='40.5' r='2' fill='%233f6fe0'/%3E%3Ccircle cx='27' cy='40.5' r='2' fill='%233f6fe0'/%3E%3Crect x='33' y='38.8' width='13' height='3.4' rx='1.7' fill='%233f6fe0' opacity='.55'/%3E%3C/svg%3E">
+<meta name="color-scheme" content="dark light">
+<title>{{.Device.DisplayName}} · {{T "无线设置"}} {{.Band.Label}}</title>
+<link rel="stylesheet" href="/static/style.css">
+<script>
+  // 在样式生效之前把主题定下来，避免刷新时先闪一下暗色
+  (function () {
+    try {
+      var t = localStorage.getItem("theme");
+      if (t !== "light" && t !== "dark") {
+        t = (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches)
+          ? "light" : "dark";
+      }
+      document.documentElement.setAttribute("data-theme", t);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "dark");
+    }
+  })();
+</script>
+</head>
+<body>
+{{template "topnav" .}}
+
+<main>
+  <div class="crumb">
+    <a href="/">{{T "设备列表"}}</a> /
+    <a href="/devices/{{.Device.ID}}">{{.Device.DisplayName}}</a> /
+    {{T "无线设置"}} {{.Band.Label}}
+  </div>
+
+  {{if eq .Queued "none"}}
+  <div class="notice">{{T "没有检测到改动，未下发任何参数。"}}</div>
+  {{else if .Queued}}
+  <div class="notice ok">
+    {{T "已入队 %d 个参数的修改（SetParameterValues）。" .Queued}}
+    {{T "设备下次 Inform 或连接时会下发；下发成功后会自动把参数"}}<b>{{T "读回核对"}}</b>，{{T "下面的任务列表里能看到结果。"}}
+  </div>
+  {{end}}
+
+  <h2>{{T "无线设置 ·"}} {{.Band.Label}}{{if .Band.Note}} <span class="hint">{{TS .Band.Note}}</span>{{end}}</h2>
+  <div class="hint" style="margin:-6px 0 14px">
+    BSSID <span class="mono">{{if .Band.BSSID}}{{.Band.BSSID}}{{else}}-{{end}}</span>
+  </div>
+
+  {{if .Fields}}
+  <form method="post" action="/devices/{{.Device.ID}}/wifi/{{.Band.Instance}}" class="wform">
+    {{range $f := .Fields}}
+    <div class="wrow">
+      <div class="wlabel">{{TS $f.Label}}</div>
+      <div class="winput">
+        {{if eq $f.Kind "bool"}}
+          <input type="hidden" name="h_{{$f.Key}}" value="1">
+          <label class="chk" title="{{$f.Param}}">
+            <input type="checkbox" id="f_{{$f.Key}}" name="{{$f.Key}}" value="1"
+                   {{if eq $f.Value "1"}}checked{{end}} {{if $f.ReadOnly}}disabled{{end}}>
+            <span>{{if eq $f.Value "1"}}{{T "已启用"}}{{else}}{{T "已关闭"}}{{end}}</span>
+            {{if $f.ReadOnly}}<span class="badge off">{{T "只读"}}</span>{{end}}
+          </label>
+        {{else if eq $f.Kind "select"}}
+          <select id="f_{{$f.Key}}" name="{{$f.Key}}" title="{{$f.Param}}"
+                  data-autochannel="{{if eq $f.Key "channel"}}1{{end}}"
+                  {{if $f.ReadOnly}}disabled{{end}}>
+            {{range $o := $f.Options}}
+            <option value="{{$o.Value}}" {{if eq $o.Value $f.Value}}selected{{end}}>{{TS $o.Label}}</option>
+            {{end}}
+          </select>
+        {{else if eq $f.Kind "password"}}
+          <input type="password" id="f_{{$f.Key}}" name="{{$f.Key}}" value="" title="{{$f.Param}}"
+                 placeholder='{{T "为空表示不修改"}}' {{if $f.ReadOnly}}disabled{{end}}>
+        {{else}}
+          <input type="text" id="f_{{$f.Key}}" name="{{$f.Key}}" value="{{$f.Value}}" title="{{$f.Param}}"
+                 {{if $f.ReadOnly}}disabled{{end}}>
+        {{end}}
+        {{if $f.Hint}}<div class="hint">{{TS $f.Hint}}</div>{{end}}
+      </div>
+    </div>
+    {{end}}
+    <div class="wrow">
+      <div class="wlabel"></div>
+      <div class="winput"><button type="submit">{{T "提交"}}</button></div>
+    </div>
+  </form>
+  {{else}}
+  <div class="empty">
+    {{T "这台设备还没有采集到可编辑的无线参数。"}}<br>
+    {{T "先点"}}<a href="/devices/{{.Device.ID}}">{{T "设备详情页"}}</a>{{T "的「重新采集无线概况」。"}}
+  </div>
+  {{end}}
+
+  <h2>{{T "高级：直接设置任意参数"}}</h2>
+  <div class="hint" style="margin:-6px 0 10px">
+    {{T "可直接指定表单里没有的参数。"}}
+  </div>
+  <form method="post" action="/devices/{{.Device.ID}}/wifi/{{.Band.Instance}}" class="wform">
+    <div class="wrow">
+      <div class="wlabel">{{T "参数名"}}</div>
+      <div class="winput"><input type="text" name="adv_name" style="width:520px"
+             placeholder="InternetGatewayDevice.LANDevice.1.WLANConfiguration.{{.Band.Instance}}.X_HW_HT20"></div>
+    </div>
+    <div class="wrow">
+      <div class="wlabel">{{T "值"}}</div>
+      <div class="winput"><input type="text" name="adv_value" style="width:260px"></div>
+    </div>
+    <div class="wrow">
+      <div class="wlabel">{{T "类型"}}</div>
+      <div class="winput">
+        <select name="adv_type">
+          <option value="">（{{T "自动）"}}</option>
+          <option value="string">string</option>
+          <option value="boolean">boolean</option>
+          <option value="unsignedInt">unsignedInt</option>
+          <option value="int">int</option>
+        </select>
+      </div>
+    </div>
+    <div class="wrow">
+      <div class="wlabel"></div>
+      <div class="winput"><button type="submit">{{T "提交"}}</button></div>
+    </div>
+  </form>
+
+  <h2>{{T "最近任务"}}</h2>
+  {{if .Tasks}}
+  <table>
+    <thead><tr><th>#</th><th>{{T "类型"}}</th><th>{{T "状态"}}</th><th>{{T "结果"}}</th><th>{{T "创建"}}</th><th>{{T "完成"}}</th></tr></thead>
+    <tbody>
+      {{range .Tasks}}
+      <tr>
+        <td class="mono">{{.ID}}</td>
+        <td class="mono">{{.Kind}}</td>
+        <td><span class="badge {{.Status}}">{{.Status}}</span></td>
+        <td class="mono">{{if .Result}}{{.Result}}{{else}}-{{end}}</td>
+        <td class="mono">{{fmtTime .CreatedAt}}</td>
+        <td class="mono">{{fmtTime .FinishedAt}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <div class="empty">{{T "暂无任务"}}</div>
+  {{end}}
+</main>
+
+<script>
+  // 开了自动信道就把「无线信道」置灰（跟商用 ACS 一致的交互）
+  (function () {
+    var auto = document.getElementById("f_auto_channel");
+    var ch = document.getElementById("f_channel");
+    if (!auto || !ch) return;
+    function sync() { ch.disabled = auto.checked; }
+    auto.addEventListener("change", sync);
+    sync();
+  })();
+</script>
+<script>window.I18N = {{.I18NJSON}};</script>
+<script src="/static/app.js"></script>
+</body>
+</html>

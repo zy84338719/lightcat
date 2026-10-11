@@ -1,0 +1,79 @@
+syntax = "proto3";
+
+package lightcat.api;
+
+option go_package = "lightcat/api";
+
+import "api.proto";
+
+// LightCat 机器接口（/api/*）契约。鉴权：面板登录态或 Bearer token（-api-token）。
+// 响应 payload 沿用 internal/store 的既有结构体（字段名即 JSON 键，v1.3.0 已公开，
+// 不做 snake_case 破坏性变更）；hz 只生成路由与 handler 骨架，handler 委托给服务层。
+//
+// 本文件是**路由表与请求形态**的单一出处（改了这里就跑 hz update 重新生成路由）。
+// 但 biz/model 下 protoc 生成的 pb.go **不参与运行时**：handler 刻意不 import 它，
+// 请求/响应都直接走 internal/web 的服务层与 store 结构体 —— JSON 形状由 415 项
+// e2e 钉死，不能被 protoc 的 snake_case 习惯改掉。生成物只服务于 hz 的路由推导，
+// 所以它进 .gitignore，需要时用 hz update 重新生成即可。
+
+message DevicesReq {
+  string tag = 1 [(.api.query) = "tag"];   // 可选：按标签筛选
+}
+message DeviceReq {
+  int64 id = 1 [(.api.path) = "id"];
+}
+message OpticalCsvReq {
+  int64 id = 1 [(.api.path) = "id"];
+  int64 limit = 2 [(.api.query) = "limit"];
+}
+// fetch/names 两个 POST 端点收 **JSON body**（{"path":…,"exclude":[…],"max":N}），
+// 不是 form —— handler 直接 json.Decode 整个 body。IDL 标 raw_body 是如实记录
+// 这一点：字段由 body 承载，hz 不做逐字段绑定，解析在服务层统一进行。
+message FetchReq {
+  int64 id = 1 [(.api.path) = "id"];
+  bytes body = 2 [(.api.raw_body) = "*"];
+}
+message NamesReq {
+  int64 id = 1 [(.api.path) = "id"];
+  bytes body = 2 [(.api.raw_body) = "*"];
+}
+message WifiReq {
+  int64 id = 1 [(.api.path) = "id"];
+}
+message Resp {
+  int32 code = 1;
+  string msg = 2;
+}
+
+service LightCatAPI {
+  rpc ListDevices(DevicesReq) returns (Resp) {
+    option (.api.get) = "/api/devices";
+  }
+  rpc GetDevice(DeviceReq) returns (Resp) {
+    option (.api.get) = "/api/devices/:id";
+  }
+  rpc ExportDevicesCSV(DevicesReq) returns (Resp) {
+    option (.api.get) = "/api/devices.csv";
+  }
+  rpc ExportOpticalCSV(OpticalCsvReq) returns (Resp) {
+    option (.api.get) = "/api/devices/:id/optical.csv";
+  }
+  rpc ListAlerts(DevicesReq) returns (Resp) {
+    option (.api.get) = "/api/alerts";
+  }
+  rpc ListPresets(DevicesReq) returns (Resp) {
+    option (.api.get) = "/api/presets";
+  }
+  rpc ListFiles(DevicesReq) returns (Resp) {
+    option (.api.get) = "/api/files";
+  }
+  rpc FetchParams(FetchReq) returns (Resp) {
+    option (.api.post) = "/api/devices/:id/fetch";
+  }
+  rpc FetchNames(NamesReq) returns (Resp) {
+    option (.api.post) = "/api/devices/:id/names";
+  }
+  rpc CollectWifi(WifiReq) returns (Resp) {
+    option (.api.post) = "/api/devices/:id/wifi";
+  }
+}

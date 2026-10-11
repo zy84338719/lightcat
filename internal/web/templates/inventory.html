@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%2357aeff'/%3E%3Cstop offset='1' stop-color='%237c8fff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='16' fill='url%28%23g%29'/%3E%3Cline x1='21' y1='33' x2='15' y2='17' stroke='white' stroke-width='4.5' stroke-linecap='round'/%3E%3Cline x1='43' y1='33' x2='49' y2='17' stroke='white' stroke-width='4.5' stroke-linecap='round'/%3E%3Crect x='12' y='33' width='40' height='15' rx='5' fill='white'/%3E%3Ccircle cx='20' cy='40.5' r='2' fill='%233f6fe0'/%3E%3Ccircle cx='27' cy='40.5' r='2' fill='%233f6fe0'/%3E%3Crect x='33' y='38.8' width='13' height='3.4' rx='1.7' fill='%233f6fe0' opacity='.55'/%3E%3C/svg%3E">
+<meta name="color-scheme" content="dark light">
+<title>{{T "设备清单 · LightCat 光猫管家"}}</title>
+<link rel="stylesheet" href="/static/style.css">
+<script>
+  // 在样式生效之前把主题定下来，避免刷新时先闪一下暗色
+  (function () {
+    try {
+      var t = localStorage.getItem("theme");
+      if (t !== "light" && t !== "dark") {
+        t = (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches)
+          ? "light" : "dark";
+      }
+      document.documentElement.setAttribute("data-theme", t);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "dark");
+    }
+  })();
+</script>
+</head>
+<body>
+{{template "topnav" .}}
+
+<main>
+  <h2>{{icon "clipboard"}}{{T "设备清单"}}</h2>
+  <div class="hint page-intro">
+    {{T "全部设备资产：在线的、离线的、历史上纳管过的都在，直到手动删除才消失。点表头可排序。"}}
+  </div>
+
+  <div class="filters" style="margin-bottom:10px">
+    <span class="badge on">{{T "在线"}} {{.Stats.Online}}</span>
+    <span class="badge off">{{T "离线"}} {{.OfflineCount}}</span>
+    <a class="ghost" href="/api/devices.csv"
+       title='{{T "导出为 CSV（UTF-8 带 BOM，Excel 直接打开）"}}'>{{T "导出 CSV"}}</a>
+    <span class="hint">{{T "共 %d 台" .Stats.Devices}}</span>
+  </div>
+
+  {{if .Devices}}
+  <table id="inventory-table" data-pager="50" class="sortable">
+    <thead>
+      <tr>
+        <th>{{T "状态"}}</th><th>{{T "名称"}}</th><th>{{T "序列号"}}</th><th>{{T "型号"}}</th>
+        <th>{{T "软件版本"}}</th><th>{{T "数据模型"}}</th><th>{{T "来源 IP"}}</th><th>WAN IP</th>
+        <th>{{T "首次纳管"}}</th><th>{{T "最后上报"}}</th><th>{{T "上报周期"}}</th>
+        <th>{{T "参数"}}</th><th>{{T "无线终端"}}</th>
+        {{if .HasOptical}}<th>{{T "收光"}} / {{T "发光"}}</th>{{end}}
+        <th>{{T "备注"}}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range $d := .Devices}}
+      {{$o := index $.Optical $d.ID}}
+      {{$fttr := index $.FTTR $d.ID}}
+      <tr>
+        <td>{{if $d.Probing}}<span class="badge probing">{{T "探测中"}}</span>{{else if $d.Online}}<span class="badge on">{{T "在线"}}</span>{{else}}<span class="badge off">{{T "离线"}}</span>{{end}}</td>
+        <td><a href="/devices/{{$d.ID}}">{{$d.DisplayName}}</a>{{range $t := $d.Tags}} <a class="badge tag" href="/?tag={{urlquery $t}}" title='{{T "按标签筛选"}}'>{{$t}}</a>{{end}}{{if $fttr}} <span class="badge fttr" title='{{T "%d 台 FTTR 子设备" $fttr}}'>FTTR ×{{$fttr}}</span>{{end}}</td>
+        <td class="mono">{{$d.SerialNumber}} <button type="button" class="copybtn" data-copy="{{$d.SerialNumber}}" title='{{T "复制"}}' aria-label='{{T "复制序列号"}}'>⧉</button></td>
+        <td>{{if $d.ModelName}}{{$d.ModelName}}{{else}}-{{end}}</td>
+        <td class="mono">{{if $d.SoftwareVersion}}{{$d.SoftwareVersion}}{{else}}-{{end}}</td>
+        <td class="mono">{{if $d.DataModelRoot}}{{dataModelLabel $d.DataModelRoot}}{{else}}<span class="hint">{{T "未知"}}</span>{{end}}</td>
+        <td class="mono">{{$d.SourceIP}}</td>
+        <td class="mono">{{if $d.ExternalIP}}{{$d.ExternalIP}}{{else}}<span class="hint">-</span>{{end}}</td>
+        <td class="mono hint">{{fmtTime $d.FirstSeenAt}}</td>
+        <td class="mono">{{fmtTime $d.LastInformAt}}{{if $d.LastEvents}}<div class="hint" title='{{T "最近一次上报的事件码"}}'>{{$d.LastEvents}}</div>{{end}}</td>
+        <td class="mono">{{if $d.PeriodicInterval}}{{$d.PeriodicInterval}}s{{else}}<span class="hint">-</span>{{end}}</td>
+        <td class="mono">{{$d.ParamCount}}</td>
+        <td class="mono">{{index $.ClientCounts $d.ID}}</td>
+        {{if $.HasOptical}}
+        <td class="mono">{{if or $o.Rx $o.Tx}}{{$o.Rx}}{{if $o.Tx}} / {{$o.Tx}}{{end}}{{else}}<span class="hint">-</span>{{end}}</td>
+        {{end}}
+        <td class="note" title="{{$d.Note}}">{{if $d.Note}}{{$d.Note}}{{else}}<span class="hint">-</span>{{end}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <div class="empty">
+    {{T "还没有设备接入。"}}<br>
+    {{T "把 CPE 的 ACS URL 指到本服务的"}} <span class="mono">/acs</span>（{{T "或根路径"}} <span class="mono">/</span>），{{T "设备下次 Inform 就会出现在这里。"}}
+  </div>
+  {{end}}
+</main>
+<script>window.I18N = {{.I18NJSON}};</script>
+<script src="/static/app.js"></script>
+</body>
+</html>

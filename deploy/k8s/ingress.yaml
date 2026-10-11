@@ -1,0 +1,29 @@
+# 可选：用域名 + Ingress 暴露面板（TLS 在 Ingress 终结，容器内不用配 ACS_TLS_*）。
+# 默认**不在** kustomization 的 resources 里——改好 host/证书再手动 apply 或自行加入。
+#
+# CWMP 也可以走 Ingress（光猫填 https://<域名>/acs，SOAP POST 没有问题），
+# 但设备侧地址要求长期稳定，一般更推荐 service-cwmp.yaml 的 LoadBalancer/NodePort。
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: lightcat
+  labels:
+    app.kubernetes.io/name: lightcat
+  # annotations:
+  #   nginx.ingress.kubernetes.io/proxy-body-size: 8m   # CWMP 大包上报时放宽
+spec:
+  ingressClassName: nginx          # 按集群实际的 IngressClass 改（traefik 等）
+  rules:
+    - host: lightcat.example.com   # ← 改成你的域名
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: lightcat-panel
+                port:
+                  number: 8080
+  # tls:
+  #   - hosts: [lightcat.example.com]
+  #     secretName: lightcat-tls   # kubectl create secret tls lightcat-tls --cert … --key …
