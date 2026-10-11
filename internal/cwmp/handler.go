@@ -1201,7 +1201,18 @@ func (s *Server) onInform(w http.ResponseWriter, r *http.Request, sess *Session,
 		s.writeEnvelope(w, sess, env.ID, FaultBody(FaultInternalError, "服务端存储失败"))
 		return
 	}
-	s.sess.bindDevice(sess, deviceID)
+	// 绑定会话。指纹撞车时（同一 NAT 出口、同型号同固件的两台设备）bindDevice
+	// 会丢弃这个已属于别台设备的会话并返回 false —— 此时回一个 Fault 让 CPE
+	// 重开会话，而不是继续用一个 DeviceID 指向别人的会话。
+	//
+	// 注意：下面用 deviceID（本次 Inform 解析出来的局部值）而不是 sess.DeviceID
+	// 落库，所以即便会话被丢弃，本次上报的参数也不会写错设备。
+	if !s.sess.bindDevice(sess, deviceID) {
+		s.log.Warn("会话归属冲突（疑似同一 NAT 出口下两台设备指纹相同），已丢弃会话让设备重开",
+			"device_id", deviceID, "session", sess.ID)
+		s.writeEnvelope(w, sess, env.ID, FaultBody(FaultInternalError, "会话冲突，请重试"))
+		return
+	}
 
 	// 参数落库（Inform 只带部分参数，不能当全量）
 	if len(inf.Params) > 0 {

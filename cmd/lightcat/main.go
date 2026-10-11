@@ -276,6 +276,16 @@ func run(args []string) error {
 		liveListeners[webAddr] = panelLn
 	}
 
+	// 面板账号没启用但配了 API Token：这组合最容易被误解 —— 设置页写着
+	// 「Token 给 /api 与 /metrics 用」，运维会以为机器端点受保护，而实际上
+	// 面板本来就是公开的（/api 含序列号、IP、全部参数）。说清楚比默默生效好。
+	if !creds.Enabled() {
+		if tok := settingOr(st, "api_token", cfg.APIToken); tok != "" {
+			log.Warn("已配置 API Token 但未启用面板账号密码：/api 与 /metrics 现在需要携带该 Token 才能访问，" +
+				"面板页面本身仍然对能访问本端口的人公开（含设备序列号、IP、参数值）")
+		}
+	}
+
 	webOpts := web.Options{
 		Auth: creds,
 		Log:  log,

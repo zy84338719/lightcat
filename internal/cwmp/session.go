@@ -151,14 +151,30 @@ func (m *sessionManager) registerLocked(s *Session) *Session {
 
 // bindDevice 把会话绑到具体设备上。同一设备已有别的会话时，旧会话作废
 // （CPE 一次只跑一个会话，出现第二个说明旧的已经死了）。
-func (m *sessionManager) bindDevice(s *Session, deviceID int64) {
+//
+// 另一个方向同样要处理：**一个会话被两台设备先后复用**。无 cookie 时
+// sessionKeyOf 的兜底指纹是 (源IP, User-Agent, BasicAuth用户)，而开启
+// CPE 认证后 user 这一维对所有设备是同一个常量，指纹实际退化成
+// (源IP, User-Agent) —— 同一 NAT/CGNAT 出口、同型号同固件的两台设备会
+// 撞进同一个会话。若不处理，A 设备的回执会按 sess.DeviceID 写进 B 设备名下
+// （参数、设备信息、任务下发都取这个字段）。
+// 返回 false 表示绑定失败且本会话已被丢弃（指纹撞车），调用方应让 CPE 重开会话。
+func (m *sessionManager) bindDevice(s *Session, deviceID int64) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	// 会话已经属于别的设备：这说明指纹撞了，不能改绑 —— 强行覆盖会让
+	// 前一台设备的在途回执写到错误设备名下。此时丢弃本会话（dropLocked 会把
+	// 它从 byID/byKey 摘掉），调用方会在下一个请求拿到全新的会话。
+	if s.DeviceID != 0 && s.DeviceID != deviceID {
+		m.dropLocked(s)
+		return false
+	}
 	if old, ok := m.byDevice[deviceID]; ok && old != s {
 		m.dropLocked(old)
 	}
 	s.DeviceID = deviceID
 	m.byDevice[deviceID] = s
+	return true
 }
 
 func (m *sessionManager) touch(s *Session) {

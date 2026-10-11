@@ -292,13 +292,25 @@ func WriteCSV(w io.Writer, header []string, recs [][]string) error {
 
 // APIAuthOK 机器端点的双通道鉴权（面板会话 cookie 或 Bearer token），
 // 与 apiGuard 同一口径；hz 路由的 guard 中间件走这里。
+//
+// 配了 token 就必须校验，不因面板账号未启用而放行（理由见 web.go 的 apiGuard
+// 注释）：否则「配了 token」看起来有防护、实际 /api 全网可读。
 func (s *Server) APIAuthOK(sessionCookie, bearer string) bool {
-	if s.opt.Auth == nil || !s.opt.Auth.Enabled() {
+	// 有面板登录态就放行（人在浏览器里用），与 net/http 侧 apiGuard 的口径一致。
+	//
+	// 注意判断「是否已登录」不能只看 LoggedInCookie 的返回值：面板未启用账号时
+	// 它恒为 true。这里用 Enabled() 把两种情况分开：
+	//   面板启用 → LoggedInCookie 才有意义（验签）；
+	//   面板未启用 → 本来就是公开部署，不构成一道门。
+	if s.opt.Auth != nil && s.opt.Auth.Enabled() && s.opt.Auth.LoggedInCookie(sessionCookie) {
 		return true
 	}
-	// token 面板上可配（settings 表优先于启动参数），动态读取 —— 改完立即生效
-	if tok := currentAPIToken(s.store, s.opt); tok != "" && bearer != "" && constantTimeEq(bearer, tok) {
-		return true
+	// 配了 token 就必须校验，不因面板账号未启用而放行（理由见 web.go 的 apiGuard
+	// 注释）：否则「配了 token」看起来有防护、实际 /api 全网可读。
+	tok := currentAPIToken(s.store, s.opt)
+	if tok == "" {
+		// 没配 token：按面板自身的鉴权口径（未开账号 = 公开）
+		return s.opt.Auth == nil || !s.opt.Auth.Enabled()
 	}
-	return s.opt.Auth.LoggedInCookie(sessionCookie)
+	return bearer != "" && constantTimeEq(bearer, tok)
 }
