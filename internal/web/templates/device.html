@@ -29,7 +29,7 @@
 <main data-subnav>
   <div class="crumb"><a href="/">{{T "设备列表"}}</a> / {{.Device.DisplayName}}</div>
 
-  <div class="cards">
+  <div class="devcards">
     <div class="card">
       <div class="l">{{T "状态"}}</div>
       <div>{{if .Device.Probing}}<span class="badge probing">{{T "探测中"}}</span>{{else if .Device.Online}}<span class="badge on">{{T "在线"}}</span>{{else}}<span class="badge off">{{T "离线"}}</span>{{end}}</div>
@@ -37,29 +37,31 @@
     </div>
     <div class="card"><div class="n">{{len .Params}}</div><div class="l">{{T "已采集参数"}}</div></div>
     <div class="card"><div class="n">{{.Pending}}</div><div class="l">{{T "待办任务"}}</div></div>
-    <div class="card">
-      <div class="l">{{T "操作"}}</div>
-      <form method="post" action="/devices/{{.Device.ID}}/refresh" style="margin-top:6px">
-        <button type="submit" {{if or (not .Device.Online) .WebOnly}}disabled
-                title='{{if .WebOnly}}{{T "Web 适配通道只读：该操作需真 TR-069 接入"}}{{else}}{{T "设备离线：它下次上报时才会收到指令，等它回来再点"}}{{end}}'{{end}}>{{T "重新获取设备信息"}}</button>
-      </form>
-      <form method="post" action="/devices/{{.Device.ID}}/wake" style="margin-top:8px">
-        <button type="submit" class="ghost"
-                {{if or (not .Device.Online) .WebOnly}}disabled title='{{if .WebOnly}}{{T "Web 适配通道只读：该操作需真 TR-069 接入"}}{{else}}{{T "设备离线：唤醒命令发不出去（离线判定本来就会自动探测）"}}{{end}}'
-                {{else}}title='{{T "让设备立刻回连一次，不用等下次上报"}}'{{end}}>
-          {{T "立即唤醒设备"}}
-        </button>
-      </form>
-      <form method="post" action="/devices/{{.Device.ID}}/reboot" style="margin-top:8px"
-            data-confirm='{{T "确定要重启「%s」吗？设备会立刻断开重启，重启期间无法上网（通常几分钟），重连后 TR-069 会自动接回来。" .Device.DisplayName}}'>
-        <button type="submit" class="danger" {{if or (not .Device.Online) .WebOnly}}disabled
-                title='{{if .WebOnly}}{{T "Web 适配通道只读：该操作需真 TR-069 接入"}}{{else}}{{T "设备离线：重启命令发不出去"}}{{end}}'{{end}}>{{T "重启设备"}}</button>
-      </form>
-      <form method="post" action="/devices/{{.Device.ID}}/delete" style="margin-top:8px"
-            data-confirm='{{T "确定要从本 ACS 删除「%s」吗？只会删掉这里的记录（参数、任务、上报历史），不会动设备本身；如果设备还配着本 ACS 地址，下次上报会重新纳管。" .Device.DisplayName}}'>
-        <button type="submit" class="danger">{{T "删除设备"}}</button>
-      </form>
-    </div>
+  </div>
+
+  <div class="actionbar">
+    <span class="actionbar-l">{{icon "zap"}}{{T "操作"}}</span>
+    <form method="post" action="/devices/{{.Device.ID}}/refresh">
+      <button type="submit" {{if or (not .Device.Online) .WebOnly}}disabled
+              title='{{if .WebOnly}}{{T "Web 适配通道只读：该操作需真 TR-069 接入"}}{{else}}{{T "设备离线：它下次上报时才会收到指令，等它回来再点"}}{{end}}'{{end}}>{{T "重新获取设备信息"}}</button>
+    </form>
+    <form method="post" action="/devices/{{.Device.ID}}/wake">
+      <button type="submit" class="ghost"
+              {{if or (not .Device.Online) .WebOnly}}disabled title='{{if .WebOnly}}{{T "Web 适配通道只读：该操作需真 TR-069 接入"}}{{else}}{{T "设备离线：唤醒命令发不出去（离线判定本来就会自动探测）"}}{{end}}'
+              {{else}}title='{{T "让设备立刻回连一次，不用等下次上报"}}'{{end}}>
+        {{T "立即唤醒设备"}}
+      </button>
+    </form>
+    <span class="spacer"></span>
+    <form method="post" action="/devices/{{.Device.ID}}/reboot"
+          data-confirm='{{T "确定要重启「%s」吗？设备会立刻断开重启，重启期间无法上网（通常几分钟），重连后 TR-069 会自动接回来。" .Device.DisplayName}}'>
+      <button type="submit" class="danger" {{if or (not .Device.Online) .WebOnly}}disabled
+              title='{{if .WebOnly}}{{T "Web 适配通道只读：该操作需真 TR-069 接入"}}{{else}}{{T "设备离线：重启命令发不出去"}}{{end}}'{{end}}>{{T "重启设备"}}</button>
+    </form>
+    <form method="post" action="/devices/{{.Device.ID}}/delete"
+          data-confirm='{{T "确定要从本 ACS 删除「%s」吗？只会删掉这里的记录（参数、任务、上报历史），不会动设备本身；如果设备还配着本 ACS 地址，下次上报会重新纳管。" .Device.DisplayName}}'>
+      <button type="submit" class="danger">{{T "删除设备"}}</button>
+    </form>
   </div>
   <div class="hint" style="margin:-8px 0 4px">
     {{if .Device.Online}}{{T "任务在设备下次上报时下发（离线时会排队等待）。"}}
@@ -75,6 +77,7 @@
 
   {{if .Alerts}}
   <h2>{{icon "bell"}}{{T "最近告警"}}</h2>
+  <div class="tablewrap">
   <table>
     <thead>
       <tr><th>{{T "时间"}}</th><th>{{T "类型"}}</th><th>{{T "内容"}}</th></tr>
@@ -82,13 +85,14 @@
     <tbody>
       {{range .Alerts}}
       <tr>
-        <td class="mono">{{fmtTime .At}}</td>
+        <td class="mono nowrap">{{fmtTime .At}}</td>
         <td><span class="badge {{if or (eq .Kind "offline") (eq .Kind "optic_down")}}failed{{else}}probing{{end}}">{{TS .KindLabel}}</span></td>
         <td>{{TS .Message}}</td>
       </tr>
       {{end}}
     </tbody>
   </table>
+  </div>
   <div class="hint" style="margin-top:-4px"><a href="/alerts">{{T "查看全部告警"}}</a></div>
   {{end}}
 
@@ -122,6 +126,7 @@
   <div class="hint" style="margin-bottom:10px">
     {{T "共 %d 条连接，已连接 %d 条。" (len .Wan) .WanConnected}}
   </div>
+  <div class="tablewrap">
   <table>
     <thead>
       <tr><th>{{T "连接"}}</th><th>{{T "状态"}}</th><th>IP / {{T "掩码"}}</th><th>{{T "网关"}}</th><th>MAC</th>
@@ -136,18 +141,19 @@
             <span class="badge {{if eq .Status "Connected"}}on{{else}}off{{end}}">{{.Status}}</span>
           {{else}}<span class="hint">-</span>{{end}}
         </td>
-        <td class="mono">{{if .IP}}{{.IP}}{{if .Mask}} / {{.Mask}}{{end}}{{else}}-{{end}}</td>
+        <td class="mono nowrap">{{if .IP}}{{.IP}}{{if .Mask}} / {{.Mask}}{{end}}{{else}}-{{end}}</td>
         <td class="mono">{{if .Gateway}}{{.Gateway}}{{else}}-{{end}}</td>
-        <td class="mono">{{if .MAC}}{{.MAC}}{{else}}-{{end}}</td>
+        <td class="mono nowrap">{{if .MAC}}{{.MAC}}{{else}}-{{end}}</td>
         <td>{{if .Addressing}}{{.Addressing}}{{else}}-{{end}}{{if .NAT}} <span class="hint">{{.NAT}}</span>{{end}}</td>
         <td>{{if .Service}}{{.Service}}{{else}}-{{end}}</td>
-        <td class="mono">{{if .VLAN}}{{.VLAN}}{{else}}-{{end}}</td>
-        <td class="mono">{{if .Uptime}}{{.Uptime}}{{else}}-{{end}}</td>
+        <td class="mono nowrap">{{if .VLAN}}{{.VLAN}}{{else}}-{{end}}</td>
+        <td class="mono nowrap">{{if .Uptime}}{{.Uptime}}{{else}}-{{end}}</td>
         <td class="mono hint">{{fmtTimeShort .Updated}}</td>
       </tr>
       {{end}}
     </tbody>
   </table>
+  </div>
   {{end}}
 
   <h2>{{icon "info"}}{{T "基本信息"}}</h2>
@@ -193,6 +199,7 @@
     {{T "共 %d 台子设备，在线 %d 台。" (len .Fttr) .FttrOnline}}
   </div>
   {{if .Fttr}}
+  <div class="tablewrap">
   <table>
     <thead>
       <tr><th>{{T "实例"}}</th><th>{{T "型号"}}</th><th>{{T "序列号"}}</th><th>MAC</th><th>{{T "在线"}}</th><th>{{T "终端"}}</th>
@@ -201,10 +208,10 @@
     <tbody>
       {{range .Fttr}}
       <tr>
-        <td class="mono">{{.Instance}}</td>
+        <td class="mono nowrap">{{.Instance}}</td>
         <td>{{if .Model}}{{.Model}}{{else}}-{{end}}</td>
-        <td class="mono">{{if .Serial}}{{.Serial}}{{else}}-{{end}}</td>
-        <td class="mono">{{if .MAC}}{{.MAC}}{{else}}-{{end}}</td>
+        <td class="mono nowrap">{{if .Serial}}{{.Serial}}{{else}}-{{end}}</td>
+        <td class="mono nowrap">{{if .MAC}}{{.MAC}}{{else}}-{{end}}</td>
         {{$sc := index $.SubClients .Instance}}
         <td>
           {{if .HasOnline}}
@@ -218,19 +225,20 @@
             {{else}}0{{end}}
           {{else}}<span class="hint">-</span>{{end}}
         </td>
-        <td class="mono">{{if .Firmware}}{{.Firmware}}{{else}}-{{end}}</td>
-        <td class="mono">{{if .Channel}}{{.Channel}}{{else}}-{{end}}{{if .Band}} <span class="hint">{{.Band}}</span>{{end}}</td>
+        <td class="mono nowrap">{{if .Firmware}}{{.Firmware}}{{else}}-{{end}}</td>
+        <td class="mono nowrap">{{if .Channel}}{{.Channel}}{{else}}-{{end}}{{if .Band}} <span class="hint">{{.Band}}</span>{{end}}</td>
         <td {{if .ModeHint}}title="{{TS .ModeHint}}"{{end}}>{{if .ModeText}}{{TS .ModeText}}{{else}}<span class="hint">-</span>{{end}}</td>
-        <td class="mono">{{if .Signal}}{{TS .Signal}}{{else}}-{{end}}</td>
+        <td class="mono nowrap">{{if .Signal}}{{TS .Signal}}{{else}}-{{end}}</td>
         {{if $.FttrHasOptical}}
-        <td class="mono">{{if .OpticalPower}}{{.OpticalPower}}{{else}}<span class="hint" title='{{T "设备未上报光功率"}}'>-</span>{{end}}</td>
+        <td class="mono nowrap">{{if .OpticalPower}}{{.OpticalPower}}{{else}}<span class="hint" title='{{T "设备未上报光功率"}}'>-</span>{{end}}</td>
         {{end}}
-        <td class="mono">{{if .Uptime}}{{.Uptime}}{{else}}-{{end}}</td>
+        <td class="mono nowrap">{{if .Uptime}}{{.Uptime}}{{else}}-{{end}}</td>
         <td class="mono hint">{{fmtTimeShort .Updated}}</td>
       </tr>
       {{end}}
     </tbody>
   </table>
+  </div>
   {{else}}
   <div class="empty">{{T "已探测到设备有子设备对象，但还没采集到内容 —— 等设备下次上报。"}}</div>
   {{end}}
@@ -273,6 +281,7 @@
     </form>
   </div>
   {{if .WiFi}}
+  <div class="tablewrap">
   <table>
     <thead>
       <tr><th>{{T "频段"}}</th><th>SSID</th><th>{{T "射频"}}</th><th>{{T "信道"}}</th><th>{{T "标准"}}</th><th>{{T "加密"}}</th><th>{{T "终端"}}</th><th>{{T "状态"}}</th><th>{{T "采集"}}</th><th></th></tr>
@@ -281,15 +290,15 @@
       {{range .WiFi}}
       <tr>
         <td><b>{{TS .Label}}</b>{{if .Note}} <span class="hint">{{TS .Note}}</span>{{end}}</td>
-        <td class="mono">{{if .SSID}}<a href="/devices/{{$.Device.ID}}/wifi/{{.Instance}}">{{.SSID}}</a>{{else}}<span class="hint">-</span>{{end}}</td>
+        <td class="mono nowrap">{{if .SSID}}<a href="/devices/{{$.Device.ID}}/wifi/{{.Instance}}">{{.SSID}}</a>{{else}}<span class="hint">-</span>{{end}}</td>
         <td>
           {{if .HaveOn}}
             {{if .On}}<span class="badge on">{{T "开"}}</span>{{else}}<span class="badge off">{{T "关"}}</span>{{end}}
           {{else}}<span class="hint">-</span>{{end}}
         </td>
-        <td class="mono">{{if .Channel}}{{.Channel}}{{else}}-{{end}}</td>
-        <td class="mono">{{if .Standard}}{{.Standard}}{{else}}-{{end}}</td>
-        <td class="mono">{{if .Security}}{{.Security}}{{else}}-{{end}}</td>
+        <td class="mono nowrap">{{if .Channel}}{{.Channel}}{{else}}-{{end}}</td>
+        <td class="mono nowrap">{{if .Standard}}{{.Standard}}{{else}}-{{end}}</td>
+        <td class="mono nowrap">{{if .Security}}{{.Security}}{{else}}-{{end}}</td>
         <td class="mono">
           {{if .HasClientsBtn}}
             <button class="linkbtn" type="button" data-modal="{{.ModalID}}"
@@ -303,6 +312,7 @@
       {{end}}
     </tbody>
   </table>
+  </div>
   <div class="hint" style="margin-top:6px">
     {{T "设备一般不返回明文无线密码，该字段为空属正常。点「终端」数字可以看到已连终端。"}}
   </div>
@@ -329,6 +339,7 @@
       <input id="param-filter" class="filter" type="text" placeholder='{{T "按参数名过滤，如 DeviceInfo 或 SSID"}}'>
     </div>
     {{if .Params}}
+    <div class="tablewrap">
     <table id="param-table" data-pager="20">
       <thead>
         <tr><th style="width:44%">{{T "参数名"}}</th><th>{{T "值"}}</th><th style="width:90px">{{T "类型"}}</th><th style="width:70px">{{T "可写"}}</th><th style="width:92px">{{T "更新"}}</th></tr>
@@ -345,6 +356,7 @@
         {{end}}
       </tbody>
     </table>
+    </div>
     {{else}}
     <div class="empty">{{T "还没有采集到参数。等设备下次上报或点上面的「重新获取设备信息」。"}}</div>
     {{end}}
@@ -353,6 +365,7 @@
   <details class="fold">
     <summary>{{T "任务历史"}}{{if .TaskHistoryLimit}} <span class="hint">{{T "最近 %d 条" .TaskHistoryLimit}}</span>{{end}}</summary>
     {{if .Tasks}}
+    <div class="tablewrap">
     <table id="task-table" data-pager="20">
     <thead><tr><th>#</th><th>{{T "类型"}}</th><th>{{T "状态"}}</th><th>{{T "结果"}}</th><th>{{T "创建"}}</th><th>{{T "完成"}}</th></tr></thead>
     <tbody>
@@ -368,6 +381,7 @@
       {{end}}
     </tbody>
   </table>
+    </div>
   {{else}}
   <div class="empty">{{T "暂无任务"}}</div>
   {{end}}
@@ -376,6 +390,7 @@
   <details class="fold">
     <summary>{{T "上报记录"}}{{if .InformHistoryLimit}} <span class="hint">{{T "最近 %d 条" .InformHistoryLimit}}</span>{{end}}</summary>
     {{if .Informs}}
+    <div class="tablewrap">
     <table id="inform-table" data-pager="20">
     <thead><tr><th>{{T "时间"}}</th><th>{{T "事件"}}</th><th>{{T "参数条数"}}</th><th>{{T "重试"}}</th><th>{{T "来源 IP"}}</th></tr></thead>
     <tbody>
@@ -390,6 +405,7 @@
       {{end}}
     </tbody>
   </table>
+    </div>
   {{else}}
   <div class="empty">{{T "暂无记录"}}</div>
   {{end}}

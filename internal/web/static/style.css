@@ -202,6 +202,47 @@ h2::before {
   background: linear-gradient(180deg, var(--accent), var(--accent-2));
 }
 
+/* ---------- 设备详情页：指标卡 + 操作区 ----------
+   原来四个指标与四个操作按钮挤在同一组 .cards 里：按钮竖排撑高整张卡，
+   而「状态」卡只有一个徽章 —— 四张卡高度参差、右侧大片留白。
+   拆成两段：上面一排等高的指标卡，下面一条独立的操作条。 */
+.devcards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 14px; margin-bottom: 16px;
+}
+/* 指标卡等高：内容多少都不改变高度，一排看起来是一条线 */
+.devcards .card {
+  display: flex; flex-direction: column; justify-content: center;
+  min-height: 92px; margin: 0;
+}
+/* 状态卡里是徽章不是数字，给它一个视觉上等价的「大值」位置 */
+.devcards .card .l { order: -1; }
+
+/* 操作条：一行放得下所有按钮，与指标卡视觉分层 */
+.actionbar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 9px;
+  padding: 13px 18px; margin-bottom: 22px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+  box-shadow: var(--shadow-1);
+}
+.actionbar .actionbar-l {
+  display: flex; align-items: center; gap: 7px;
+  color: var(--dim); font-size: 12.5px; margin-right: 2px;
+  padding-right: 12px; border-right: 1px solid var(--line);
+}
+.actionbar .actionbar-l svg.icon { width: 15px; height: 15px; }
+/* form 只负责包住按钮，去掉默认块级间距，让它们在同一行对齐 */
+.actionbar form { display: contents; }
+/* 危险操作靠右：读 → 写 → 破坏，视线从左到右越来越重 */
+.actionbar .spacer { flex: 1 1 auto; min-width: 12px; }
+
+/* ---------- 标签栏（data-subnav）----------
+   一页最多 7 个标签，窄屏换行本身不是问题，但让「高级：读取参数子树」这种
+   长标签独占一行会显得头重脚轻。这里只做最小干预：标签不折断，允许整块换行。 */
+.subnav { flex-wrap: wrap; }
+.subnav a { white-space: nowrap; }
+
 /* ---------- 表格 ---------- */
 table {
   width: 100%; border-collapse: separate; border-spacing: 0;
