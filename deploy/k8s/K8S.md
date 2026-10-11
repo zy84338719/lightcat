@@ -13,7 +13,7 @@ StatefulSet 单副本的滚动更新 = 先停旧 Pod 再起新 Pod（不会双�
 
 - 一个可用的 StorageClass（k3s 默认 `local-path` 即可）；
 - 镜像：CI 会把多架构镜像推到 `ghcr.io/<owner>/lightcat`；也可以本地
-  `docker build -t lightcat:v1.3.0 .` 后导入（k3s：`k3s ctr images import`，
+  `docker build -t lightcat:v1.4.0 .` 后导入（k3s：`k3s ctr images import`，
   或推给自己的私有 registry）。
 
 ## 安装
@@ -40,7 +40,7 @@ kubectl -n lightcat logs statefulset/lightcat -f
 用镜像仓库时先覆盖镜像地址：
 
 ```bash
-cd deploy/k8s && kustomize edit set image lightcat=ghcr.io/<owner>/lightcat:v1.3.0
+cd deploy/k8s && kustomize edit set image lightcat=ghcr.io/<owner>/lightcat:v1.4.0
 # 没有 kustomize 二进制就用 kubectl：kubectl -n lightcat set image …（或直接改 YAML）
 ```
 
@@ -75,7 +75,7 @@ kubectl -n lightcat port-forward svc/lightcat-panel 8080:8080   # 临时：http:
 ## 升级
 
 ```bash
-cd deploy/k8s && kustomize edit set image lightcat=ghcr.io/<owner>/lightcat:v1.3.1
+cd deploy/k8s && kustomize edit set image lightcat=ghcr.io/<owner>/lightcat:<新版本>
 kubectl apply -k deploy/k8s/ -n lightcat
 kubectl -n lightcat rollout status statefulset/lightcat
 ```
