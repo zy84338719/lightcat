@@ -22,7 +22,7 @@
 ## 安装
 
 ```bash
-VERSION=1.3.0                                  # 换成你下载的那个版本（≤1.2.x 的包名是 acs-*）
+VERSION=1.4.0                                  # 换成你下载的那个版本（≤1.2.x 的包名是 acs-*）
 tar xzf lightcat-$VERSION-linux-amd64.tar.gz
 cd lightcat-$VERSION-linux-amd64
 sudo ./install.sh
@@ -64,7 +64,7 @@ sudo ./install.sh --help                             # 全部选项
 ```bash
 sudo ./update.sh                # 拉最新版
 sudo ./update.sh --check        # 只看有没有新版本
-sudo ./update.sh --tag v1.2.3   # 升到指定版本
+sudo ./update.sh --tag v1.4.0   # 升到指定版本
 sudo ./update.sh --file lightcat-$VERSION-linux-amd64.tar.gz   # 内网/离线，用本地包
 ```
 
@@ -98,6 +98,23 @@ sudo ./uninstall.sh --purge  # 连数据库、配置、服务用户一起删
 
 面板的监听地址改动**重启生效**；面板登录账号密码保存后**立即生效**（其中密码以 PBKDF2 散列存在数据库里）。
 面板走**独立登录页 + 会话 cookie**（不是 HTTP Basic），顶栏有「退出」；忘了密码用 `ACS_WEB_AUTH=off` 起一次即可。
+
+配了 `ACS_API_TOKEN`（`/api` 与 `/metrics` 的 Bearer token）之后：
+这两个机器端点**一定校验**该 token 或面板登录态，二者其一即可，未认证回 401 JSON，
+**与是否启用面板账号无关**。启动时若检测到「配了 token 但没启用面板账号」，会打一条
+WARN —— 因为此时**面板页面本身仍然对能访问该端口的人公开**（含设备序列号、来源 IP、
+参数值）。想让面板也受保护，得同时配 `ACS_WEB_USER` / `ACS_WEB_PASS`。
+不配 token 时，机器端点跟随面板自身鉴权。
+
+## 面板里有什么
+
+装好后顶栏是主导航：设备列表、清单（资产盘点视角，不筛选不裁列）、告警、预设、
+固件、设置；顶栏右侧还有**帮助**（首次接入步骤、各页面职责、常见问题、升级方式）与
+版本号 —— 遇到「设备没上来」这类问题，面板上的帮助页通常比翻文档更快。
+
+设置页底部可一键下载 **Prometheus 抓取配置**（按当前实例生成，可达地址与 Bearer 段
+都已填好，并进 `prometheus.yml` 即可）与 **Grafana 看板 JSON**（导入后数据源选自己的
+Prometheus）。两者对 `/metrics` 实际暴露的十个指标是双向对齐的；改过 token 记得重下。
 
 ## 两个提醒
 
