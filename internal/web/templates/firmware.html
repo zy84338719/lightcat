@@ -39,7 +39,8 @@
   {{end}}
 
   {{if .Files}}
-  <table>
+  <div class="tablewrap">
+  <table class="zebra">
     <thead>
       <tr>
         <th>{{T "名称"}}</th>
@@ -61,7 +62,7 @@
         <td>{{if .Model}}{{.Model}}{{else}}<span class="hint">{{T "通用"}}</span>{{end}}</td>
         <td class="mono">{{.Size}}</td>
         <td class="mono hint" title="{{.SHA256}}">{{.SHAShort}}…</td>
-        <td class="mono">{{fmtTime .At}}</td>
+        <td class="mono nowrap">{{fmtTime .At}}</td>
         <td>
           <form method="post" action="/firmware/{{.ID}}/delete" style="display:inline"
                 data-confirm='{{T "确定删除这份文件吗？已在排队/进行中的下载会失败。"}}'>
@@ -72,9 +73,14 @@
       {{end}}
     </tbody>
   </table>
+  </div>
   <div class="hint">{{T "共 %d 条" (len .Files)}}</div>
   {{else}}
-  <div class="empty">{{T "文件库是空的，先上传一份固件。"}}</div>
+  <div class="empty">
+    <span class="empty-ico">{{icon "package"}}</span>
+    <div class="empty-title">{{T "文件库是空的"}}</div>
+    <div class="empty-body">{{T "上传一份固件或配置文件后，就能下发给设备（设备自己来拉 URL）。"}}</div>
+  </div>
   {{end}}
 
   <h3>{{T "上传文件"}}</h3>

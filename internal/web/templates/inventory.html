@@ -41,7 +41,8 @@
   </div>
 
   {{if .Devices}}
-  <table id="inventory-table" data-pager="50" class="sortable">
+  <div class="tablewrap">
+  <table id="inventory-table" data-pager="50" class="sortable zebra">
     <thead>
       <tr>
         <th>{{T "状态"}}</th><th>{{T "名称"}}</th><th>{{T "序列号"}}</th><th>{{T "型号"}}</th>
@@ -59,16 +60,16 @@
       <tr>
         <td>{{if $d.Probing}}<span class="badge probing">{{T "探测中"}}</span>{{else if $d.Online}}<span class="badge on">{{T "在线"}}</span>{{else}}<span class="badge off">{{T "离线"}}</span>{{end}}</td>
         <td><a href="/devices/{{$d.ID}}">{{$d.DisplayName}}</a>{{range $t := $d.Tags}} <a class="badge tag" href="/?tag={{urlquery $t}}" title='{{T "按标签筛选"}}'>{{$t}}</a>{{end}}{{if $fttr}} <span class="badge fttr" title='{{T "%d 台 FTTR 子设备" $fttr}}'>FTTR ×{{$fttr}}</span>{{end}}</td>
-        <td class="mono">{{$d.SerialNumber}} <button type="button" class="copybtn" data-copy="{{$d.SerialNumber}}" title='{{T "复制"}}' aria-label='{{T "复制序列号"}}'>⧉</button></td>
-        <td>{{if $d.ModelName}}{{$d.ModelName}}{{else}}-{{end}}</td>
-        <td class="mono">{{if $d.SoftwareVersion}}{{$d.SoftwareVersion}}{{else}}-{{end}}</td>
-        <td class="mono">{{if $d.DataModelRoot}}{{dataModelLabel $d.DataModelRoot}}{{else}}<span class="hint">{{T "未知"}}</span>{{end}}</td>
-        <td class="mono">{{$d.SourceIP}}</td>
-        <td class="mono">{{if $d.ExternalIP}}{{$d.ExternalIP}}{{else}}<span class="hint">-</span>{{end}}</td>
-        <td class="mono hint">{{fmtTime $d.FirstSeenAt}}</td>
-        <td class="mono">{{fmtTime $d.LastInformAt}}{{if $d.LastEvents}}<div class="hint" title='{{T "最近一次上报的事件码"}}'>{{$d.LastEvents}}</div>{{end}}</td>
-        <td class="mono">{{if $d.PeriodicInterval}}{{$d.PeriodicInterval}}s{{else}}<span class="hint">-</span>{{end}}</td>
-        <td class="mono">{{$d.ParamCount}}</td>
+        <td class="mono nowrap">{{$d.SerialNumber}} <button type="button" class="copybtn" data-copy="{{$d.SerialNumber}}" title='{{T "复制"}}' aria-label='{{T "复制序列号"}}'>⧉</button></td>
+        <td class="nowrap">{{if $d.ModelName}}{{$d.ModelName}}{{else}}-{{end}}</td>
+        <td class="mono nowrap">{{if $d.SoftwareVersion}}{{$d.SoftwareVersion}}{{else}}-{{end}}</td>
+        <td class="mono nowrap">{{if $d.DataModelRoot}}{{dataModelLabel $d.DataModelRoot}}{{else}}<span class="hint">{{T "未知"}}</span>{{end}}</td>
+        <td class="mono nowrap">{{$d.SourceIP}}</td>
+        <td class="mono nowrap">{{if $d.ExternalIP}}{{$d.ExternalIP}}{{else}}<span class="hint">-</span>{{end}}</td>
+        <td class="mono nowrap hint">{{fmtTime $d.FirstSeenAt}}</td>
+        <td class="mono nowrap">{{fmtTime $d.LastInformAt}}{{if $d.LastEvents}}<div class="hint" title='{{T "最近一次上报的事件码"}}'>{{$d.LastEvents}}</div>{{end}}</td>
+        <td class="mono nowrap">{{if $d.PeriodicInterval}}{{$d.PeriodicInterval}}s{{else}}<span class="hint">-</span>{{end}}</td>
+        <td class="mono nowrap">{{$d.ParamCount}}</td>
         <td class="mono">{{index $.ClientCounts $d.ID}}</td>
         {{if $.HasOptical}}
         <td class="mono">{{if or $o.Rx $o.Tx}}{{$o.Rx}}{{if $o.Tx}} / {{$o.Tx}}{{end}}{{else}}<span class="hint">-</span>{{end}}</td>
@@ -78,10 +79,18 @@
       {{end}}
     </tbody>
   </table>
+  </div>
   {{else}}
   <div class="empty">
-    {{T "还没有设备接入。"}}<br>
-    {{T "把 CPE 的 ACS URL 指到本服务的"}} <span class="mono">/acs</span>（{{T "或根路径"}} <span class="mono">/</span>），{{T "设备下次 Inform 就会出现在这里。"}}
+    <span class="empty-ico">{{icon "clipboard"}}</span>
+    <div class="empty-title">{{T "还没有设备接入"}}</div>
+    <div class="empty-body">
+      {{T "把 CPE 的 ACS URL 指到本服务的"}} <span class="mono">/acs</span>{{T "（或根路径"}}
+      <span class="mono">/</span>{{T "），设备下次 Inform 就会出现在这里。"}}
+    </div>
+    <div class="empty-actions">
+      <a class="ghost" href="/help">{{icon "info"}}{{T "查看接入步骤"}}</a>
+    </div>
   </div>
   {{end}}
 </main>

@@ -148,7 +148,7 @@
         <td>{{if .Service}}{{.Service}}{{else}}-{{end}}</td>
         <td class="mono nowrap">{{if .VLAN}}{{.VLAN}}{{else}}-{{end}}</td>
         <td class="mono nowrap">{{if .Uptime}}{{.Uptime}}{{else}}-{{end}}</td>
-        <td class="mono hint">{{fmtTimeShort .Updated}}</td>
+        <td class="mono nowrap hint">{{fmtTimeShort .Updated}}</td>
       </tr>
       {{end}}
     </tbody>
@@ -233,14 +233,18 @@
         <td class="mono nowrap">{{if .OpticalPower}}{{.OpticalPower}}{{else}}<span class="hint" title='{{T "设备未上报光功率"}}'>-</span>{{end}}</td>
         {{end}}
         <td class="mono nowrap">{{if .Uptime}}{{.Uptime}}{{else}}-{{end}}</td>
-        <td class="mono hint">{{fmtTimeShort .Updated}}</td>
+        <td class="mono nowrap hint">{{fmtTimeShort .Updated}}</td>
       </tr>
       {{end}}
     </tbody>
   </table>
   </div>
   {{else}}
-  <div class="empty">{{T "已探测到设备有子设备对象，但还没采集到内容 —— 等设备下次上报。"}}</div>
+  <div class="empty">
+    <span class="empty-ico">{{icon "package"}}</span>
+    <div class="empty-title">{{T "已探测到子设备对象，但还没采集到内容"}}</div>
+    <div class="empty-body">{{T "等设备下次 Inform 后这里会显示每个子设备的型号、MAC 与在线终端数。"}}</div>
+  </div>
   {{end}}
   {{end}}
 
@@ -306,7 +310,7 @@
           {{else if .Clients}}{{.Clients}}{{else}}<span class="hint">-</span>{{end}}
         </td>
         <td class="mono">{{if .Status}}{{.Status}}{{else}}-{{end}}</td>
-        <td class="mono hint">{{fmtTimeShort .Updated}}</td>
+        <td class="mono nowrap hint">{{fmtTimeShort .Updated}}</td>
         <td><a class="btn" href="/devices/{{$.Device.ID}}/wifi/{{.Instance}}">{{T "修改"}}</a></td>
       </tr>
       {{end}}
@@ -351,14 +355,18 @@
           <td class="mono">{{.Value}}</td>
           <td class="mono">{{.ValueType}}</td>
           <td>{{if .Writable}}{{T "是"}}{{else}}{{T "否"}}{{end}}</td>
-          <td class="mono hint">{{fmtTimeShort .UpdatedAt}}</td>
+          <td class="mono nowrap hint">{{fmtTimeShort .UpdatedAt}}</td>
         </tr>
         {{end}}
       </tbody>
     </table>
     </div>
     {{else}}
-    <div class="empty">{{T "还没有采集到参数。等设备下次上报或点上面的「重新获取设备信息」。"}}</div>
+    <div class="empty">
+    <span class="empty-ico">{{icon "list"}}</span>
+    <div class="empty-title">{{T "还没有采集到参数"}}</div>
+    <div class="empty-body">{{T "等设备下次上报，或点上面的「重新获取设备信息」。"}}</div>
+  </div>
     {{end}}
   </details>
 
@@ -375,15 +383,19 @@
         <td class="mono">{{TS .Kind}}</td>
         <td><span class="badge {{.Status}}">{{.Status}}</span></td>
         <td class="mono">{{if .Result}}{{TS .Result}}{{else}}-{{end}}</td>
-        <td class="mono">{{fmtTime .CreatedAt}}</td>
-        <td class="mono">{{fmtTime .FinishedAt}}</td>
+        <td class="mono nowrap">{{fmtTime .CreatedAt}}</td>
+        <td class="mono nowrap">{{fmtTime .FinishedAt}}</td>
       </tr>
       {{end}}
     </tbody>
   </table>
     </div>
   {{else}}
-  <div class="empty">{{T "暂无任务"}}</div>
+  <div class="empty">
+    <span class="empty-ico">{{icon "zap"}}</span>
+    <div class="empty-title">{{T "暂无任务"}}</div>
+    <div class="empty-body">{{T "这里记录所有下发到设备的指令与它的执行结果。"}}</div>
+  </div>
   {{end}}
   </details>
 
@@ -396,18 +408,22 @@
     <tbody>
       {{range .Informs}}
       <tr>
-        <td class="mono">{{fmtTime .CreatedAt}}</td>
+        <td class="mono nowrap">{{fmtTime .CreatedAt}}</td>
         <td class="mono">{{if .Events}}{{.Events}}{{else}}-{{end}}</td>
         <td class="mono">{{.ParamCount}}</td>
         <td class="mono">{{.RetryCount}}</td>
-        <td class="mono">{{.SourceIP}}</td>
+        <td class="mono nowrap">{{.SourceIP}}</td>
       </tr>
       {{end}}
     </tbody>
   </table>
     </div>
   {{else}}
-  <div class="empty">{{T "暂无记录"}}</div>
+  <div class="empty">
+    <span class="empty-ico">{{icon "terminal"}}</span>
+    <div class="empty-title">{{T "暂无上报记录"}}</div>
+    <div class="empty-body">{{T "设备每次 Inform（TR-069 主动上报）都会在这里留下一条。"}}</div>
+  </div>
   {{end}}
   </details>
 
