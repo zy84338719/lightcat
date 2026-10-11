@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode"
 )
 
 // 支持的语言。zh 是默认与兜底。
@@ -154,11 +155,39 @@ func tsmart(lang, text string, depth int) string {
 			}
 			args = append(args, g)
 		}
+		// 整串匹配上了**不代表翻干净了**：`无线组网（%s）` 编译成
+		// `无线组网（(.+?)）$`，非贪婪捕获遇到内层的「（3/4 格）」会提前闭合 ——
+		// 捕获到的是「75%（3/4 格）」（连「信号」都丢了），译文里于是残留中文。
+		// 这种情况退回按括号配平切段重来（趁输入还是全角括号），切好了就用切好的。
+		if res := fmt.Sprintf(en, args...); !hasHan(res) {
+			return res
+		}
+		if fixed := splitParens(lang, text); !hasHan(fixed) {
+			return fixed
+		}
 		return fmt.Sprintf(en, args...)
 	}
 	// 再退一步：后端经常把好几段拼成一句（「信号 100%（4/4 格） · RSSI -41 dBm」、
 	// 「主机 · SimWiFi · 2.4G」），整串匹配不上就逐段替换 —— 用不带锚点的正则，
 	// 命中哪段翻哪段，剩下来的（如果有）保持原样。
+	// 整串匹配不上之后，先试按**括号配平**切段，再退到逐段替换。
+	//
+	// 顺序不能反：`无线组网（%s）` 编译成 `无线组网（(.+?)）$`，非贪婪捕获遇到内层的
+	// 「（3/4 格）」会提前闭合 —— 实测捕获到的是「75%（3/4 格）」（连「信号」都丢了）。
+	// 逐段替换虽然能把外层翻成 `Wi-Fi backhaul (signal …`，却**顺手把全角括号换成了
+	// 半角**，之后再想按配平切段就找不到括号了。所以必须趁括号还是全角时先切。
+	//
+	// 切完仍留汉字（切不了、或切了也没全翻好）再走逐段替换，那条路覆盖不了嵌套。
+	if fixed := splitParens(lang, text); !hasHan(fixed) {
+		return fixed
+	}
+	out := looseTranslate(lang, text, depth)
+	return out
+}
+
+// looseTranslate 是逐段替换那条兜底路径：后端把好几段拼成一句时靠它拆开翻。
+func looseTranslate(lang, text string, depth int) string {
+	smartOnce.Do(buildSmartPatterns)
 	out := text
 	// 逐轮挑「最长的那个匹配」替换：这样「信号 100%（4/4 格）」不会被更短的
 	// 「信号 %s」先咬掉一截。每轮只改一处，改完重新找，最多 N 轮防死循环。
@@ -298,4 +327,50 @@ func Keys() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// splitParens 按**括号配平**把「前缀（内层）」拆开：第一个「（」到它配平的「」之间
+// 的内容整段翻完再拼回去。没有配平括号（或切开后无变化）时原样返回。
+func splitParens(lang, text string) string {
+	rs := []rune(text)
+	i := -1
+	for k, r := range rs {
+		if r == '（' {
+			i = k
+			break
+		}
+	}
+	if i <= 0 {
+		return text
+	}
+	depth, j := 0, -1
+	for k := i; k < len(rs); k++ {
+		switch rs[k] {
+		case '（':
+			depth++
+		case '）':
+			depth--
+			if depth == 0 {
+				j = k
+			}
+		}
+		if j >= 0 {
+			break
+		}
+	}
+	if j <= i+1 {
+		return text
+	}
+	return tsmart(lang, string(rs[:i]), 1) + "（" +
+		tsmart(lang, string(rs[i+1:j]), 1) + string(rs[j:])
+}
+
+// hasHan 报字符串里是否还留着汉字（译文里出现汉字 = 还没翻干净）。
+func hasHan(s string) bool {
+	for _, r := range s {
+		if unicode.Is(unicode.Han, r) {
+			return true
+		}
+	}
+	return false
 }
