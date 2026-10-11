@@ -89,9 +89,32 @@ func (s *Store) LastOpticalSample(deviceID int64) (OpticalSample, bool, error) {
 // 几批里 —— 不合并的话趋势图会画出一堆几乎重叠的点。
 func (s *Store) RecordOpticalSample(deviceID int64, at time.Time,
 	rx, tx, temp, volt, bias *float64, status string, window time.Duration) error {
+	// window > 0 时要先看最近一条再决定合并还是插新行 —— 这两步必须在一个
+	// 事务里：SetMaxOpenConns(1) 只保证单条语句串行，不保证「读 → 改」原子。
+	// 否则 TR-069 分批回执与 ontweb 轮询撞进同一个窗口时，两路都会判定
+	// 「需插新行」，趋势图上就会多出一个重叠点（正是这个函数要消除的东西）。
+	//
+	// 注意：事务内只能用 txs，不能回调 s.db（单连接下会自锁）。
 	if window > 0 {
-		if last, ok, err := s.LastOpticalSample(deviceID); err == nil && ok {
-			d := at.Sub(last.At)
+		txs, err := s.db.Begin()
+		if err != nil {
+			return fmt.Errorf("开始光功率合并事务失败: %w", err)
+		}
+		defer txs.Rollback()
+
+		var lastID int64
+		var tsRaw string
+		row := txs.QueryRow(`SELECT id, ts FROM optical_history
+			WHERE device_id = ? ORDER BY ts DESC LIMIT 1`, deviceID)
+		switch err := row.Scan(&lastID, &tsRaw); {
+		case err == sql.ErrNoRows:
+			// 没有历史行：直接插入，走下面的公共路径
+		case err != nil:
+			return fmt.Errorf("读取最近光功率样本失败: %w", err)
+		default:
+			// ts 列存的是字符串（与 OpticalHistory 的读法一致，用 parseTS 转回来）
+			lastAt := parseTS(tsRaw)
+			d := at.Sub(lastAt)
 			if d < 0 {
 				d = -d
 			}
@@ -99,19 +122,21 @@ func (s *Store) RecordOpticalSample(deviceID int64, at time.Time,
 				// 读数「先到的优先、空位才补」（COALESCE(旧, 新)）：同一轮采集的
 				// 多批回执里，同一读数不该被后到的批次改写；
 				// status 是时点状态，反过来「新的非空值优先」。
-				_, err := s.db.Exec(`UPDATE optical_history SET
+				if _, err := txs.Exec(`UPDATE optical_history SET
 					rx_dbm = COALESCE(rx_dbm, ?), tx_dbm = COALESCE(tx_dbm, ?),
 					temp_c = COALESCE(temp_c, ?), volt_v = COALESCE(volt_v, ?),
 					bias_ma = COALESCE(bias_ma, ?),
 					status = CASE WHEN ? != '' THEN ? ELSE status END
 					WHERE id = ?`,
 					nullFloat(rx), nullFloat(tx), nullFloat(temp), nullFloat(volt), nullFloat(bias),
-					status, status, last.ID)
-				if err != nil {
+					status, status, lastID); err != nil {
 					return fmt.Errorf("合并光功率历史失败: %w", err)
 				}
-				return nil
+				return txs.Commit()
 			}
+		}
+		if err := txs.Commit(); err != nil {
+			return fmt.Errorf("提交光功率合并事务失败: %w", err)
 		}
 	}
 	return s.InsertOpticalSample(deviceID, at, rx, tx, temp, volt, bias, status)

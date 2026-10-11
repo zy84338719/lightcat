@@ -28,7 +28,7 @@ func _apiMw() []app.HandlerFunc {
 			ctx.Next(c)
 			return
 		}
-		ctx.JSON(consts.StatusUnauthorized, map[string]string{"error": "需要登录"})
+		ctx.JSON(consts.StatusUnauthorized, map[string]string{"error": "需要 Bearer token 或面板登录"})
 		ctx.Abort()
 	}}
 }

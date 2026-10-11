@@ -145,20 +145,36 @@ func Register(mux *http.ServeMux, st *store.Store, ctrl Controller, opt Options)
 
 	// /api 与 /metrics 的第二道门：面板登录态（人）**或** Bearer API token
 	//（脚本 / Prometheus）。token 比对用常量时间，防时序侧信道；没配 token
-	// 就只剩登录态那道门，行为与从前完全一致。token 面板上可配（settings 表，
+	// 就只剩登录态那道门，行为与从头一致。token 面板上可配（settings 表，
 	// 优先于启动参数），每请求动态读 —— 改完立即生效。
+	//
+	// 配了 token 就必须校验，**不**因为面板账号没启用而放行：那会让「配了
+	// token」看起来有防护、实际 /api 全网可读（含序列号、IP、全部参数）。
+	// 没配 token 时才按「面板未开鉴权 = 本来就公开」处理，与部署时不开账号
+	// 的既有语义一致。
 	apiGuard := func(h http.HandlerFunc) http.HandlerFunc {
 		inner := guard(h)
 		return func(w http.ResponseWriter, r *http.Request) {
 			cur := currentAPIToken(st, opt)
-			if opt.Auth != nil && opt.Auth.Enabled() && cur != "" && !opt.Auth.LoggedIn(r) {
-				if tok := bearerToken(r); tok != "" &&
-					subtle.ConstantTimeCompare([]byte(tok), []byte(cur)) == 1 {
-					h.ServeHTTP(w, r)
-					return
-				}
+			if cur == "" {
+				inner.ServeHTTP(w, r) // 没配 token：维持原有口径（面板开着就要登录态）
+				return
 			}
-			inner.ServeHTTP(w, r)
+			// 配了 token 就必须校验：登录态或 Bearer 二者其一。
+			//
+			// 这里不能用 opt.Auth.LoggedIn(r) 判断「是否已登录」：面板未启用账号
+			// 时它恒返回 true（Creds.Enabled 为假即视为已登录），分支永远进不去，
+			// 于是「配了 token」实际不生效。改成直接看 cookie 是否能验签通过。
+			if opt.Auth != nil && opt.Auth.LoggedInCookie(sessionCookieOf(r)) {
+				h.ServeHTTP(w, r)
+				return
+			}
+			if tok := bearerToken(r); tok != "" &&
+				subtle.ConstantTimeCompare([]byte(tok), []byte(cur)) == 1 {
+				h.ServeHTTP(w, r)
+				return
+			}
+			writeJSONUnauthorized(w, "需要 Bearer token 或面板登录")
 		}
 	}
 
@@ -324,6 +340,22 @@ func bearerToken(r *http.Request) string {
 		return strings.TrimSpace(tok)
 	}
 	return ""
+}
+
+// sessionCookieOf 取会话 cookie 的原始值（验签交给 Creds）。
+func sessionCookieOf(r *http.Request) string {
+	if ck, err := r.Cookie(PanelCookieName); err == nil {
+		return ck.Value
+	}
+	return ""
+}
+
+// writeJSONUnauthorized 机器端点统一的无凭据响应：JSON，不是登录页跳转 ——
+// 抓取器与脚本拿到 HTML 没法判断是「被拒了」还是「服务坏了」。
+func writeJSONUnauthorized(w http.ResponseWriter, msg string) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusUnauthorized)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
 // renderStatus 同 renderLang，但可以指定 HTTP 状态码（登录失败要回 401）。
