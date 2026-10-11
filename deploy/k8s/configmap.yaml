@@ -1,0 +1,20 @@
+# LightCat 非敏感配置（面板账号/密码/API token 在 Secret 里，见 deploy/K8S.md）
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lightcat-config
+  labels:
+    app.kubernetes.io/name: lightcat
+data:
+  TZ: Asia/Shanghai
+  # CWMP（设备侧）与面板分端口：便于分别暴露（设备走 LoadBalancer/NodePort，面板只进内网）
+  ACS_LISTEN: ":7547"
+  ACS_WEB_LISTEN: ":8080"
+  ACS_DB: /data/lightcat.db
+  ACS_FILES_DIR: /data/files
+  ACS_LOG_LEVEL: info
+  # 集群日志采集建议 JSON 格式：
+  # ACS_LOG_JSON: "true"
+  # ACS 自身对外 URL：固件远程升级下发给光猫的文件地址基于它，
+  # 必须改成光猫能访问到的地址（如 Service 的外部 IP / 节点 IP）：
+  # ACS_URL: "http://192.168.1.10:7547"

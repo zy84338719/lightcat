@@ -1,0 +1,37 @@
+[Unit]
+Description=LightCat 光猫管家（TR-069/CWMP ACS，管理光猫 / FTTR）
+Documentation=https://github.com/hakureiyuyuko/go-acs
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@USER@
+Group=@GROUP@
+WorkingDirectory=@DATA@
+EnvironmentFile=-@ENVFILE@
+# 数据库路径不写死在这里：由 EnvironmentFile 的 ACS_DB 决定（安装脚本会写好；
+# 没写时程序默认 lightcat.db，落在 WorkingDirectory 里）。老安装的 ACS_DB 指向
+# 旧的 acs.db，这样升级不会换库。
+ExecStart=@BIN@
+# Restart=always 不只是抗崩溃：面板上「设置 → 改监听地址 → 立即重启服务」
+# 在这条路的实现就是「进程干净退出，交给 systemd 拉起来」，去掉这一行那个按钮就不灵了。
+Restart=always
+RestartSec=3
+# 想要 1024 以下的端口（比如 :80）时，把下面两行的注释去掉
+#AmbientCapabilities=CAP_NET_BIND_SERVICE
+#CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+# 只允许往数据目录写；数据库若挪到别处，记得加进 ReadWritePaths
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=@DATA@
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=@USER@
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,79 @@
+# 发布流水线：推 v* tag 时自动
+#   1) 构建多架构镜像（linux/amd64 + linux/arm64）推到 ghcr.io；
+#   2) 用 scripts/build-release.sh 产二进制包，连同发布说明建 GitHub Release。
+# 也可在 Actions 页手动触发（workflow_dispatch）验证本工作流本身。
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write      # 建 Release、传资产
+  packages: write      # 推 ghcr.io 镜像
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  image:
+    name: 多架构镜像 → ghcr.io
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+      # 不需要 qemu：Dockerfile 构建段固定在 runner 架构上跑（--platform=$BUILDPLATFORM），
+      # Go 交叉编译产出目标架构二进制，arm64 层只是打包 alpine 基座。
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'workflow_dispatch' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  binaries:
+    name: 二进制包 → GitHub Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+
+      - name: 构建发布包
+        run: bash scripts/build-release.sh "${GITHUB_REF_NAME#refs/tags/}"
+
+      - name: 创建 Release 并上传资产
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME#refs/tags/}"
+          NOTES=(--generate-notes)
+          [ -f "docs/releases/$TAG.md" ] && NOTES=(--notes-file "docs/releases/$TAG.md")
+          gh release create "$TAG" dist/*.tar.gz dist/SHA256SUMS \
+            --title "$TAG" "${NOTES[@]}" || \
+          gh release upload "$TAG" dist/*.tar.gz dist/SHA256SUMS --clobber

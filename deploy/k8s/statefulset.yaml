@@ -1,0 +1,109 @@
+# LightCat 主工作负载。
+#
+# 为什么是 StatefulSet 且 replicas 恒为 1：
+#   数据层是单文件 SQLite（单写者）。多副本 = 两个进程抢同一块 RWO 卷或各自一份库，
+#   都是数据损坏/分裂，**没有水平扩展的余地**（要扩展得先换存储引擎，见 docs/requirements.md）。
+#   StatefulSet 给稳定的 PVC 绑定；单副本的滚动更新 = 先停旧再起新，天然避免双实例抢库。
+#
+# 升级：改镜像 tag 后 kubectl apply（或 kustomize edit set image），旧 Pod 优雅退出
+# （SIGTERM → 5 秒内收敛 HTTP 会话 → 落盘），期间 CWMP 短暂不可用（分钟级以内），
+# 光猫会按自己的重试周期再连上来，不丢数据。
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: lightcat
+  labels:
+    app.kubernetes.io/name: lightcat
+spec:
+  replicas: 1                # 只能为 1，原因见文件头
+  serviceName: lightcat-panel
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: lightcat
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: lightcat
+    spec:
+      terminationGracePeriodSeconds: 15   # 应用收到 SIGTERM 后 5 秒内优雅退出，留足余量
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001        # 支持 fsGroup 的 CSI 驱动会自动把卷属主调好
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        # 兜底修 /data 属主：local-path / hostPath 这类不支持 fsGroup 的存储需要它。
+        # 你的存储驱动支持 fsGroup（云盘、Longhorn 等），或命名空间启用了 restricted
+        # PSA（禁止 root init 容器）时，可以把这段删掉。
+        - name: fix-data-perms
+          image: lightcat:v1.3.0          # 与主容器同一镜像（alpine 基座自带 chown）
+          command: ["/bin/sh", "-c", "chown -R 10001:10001 /data"]
+          securityContext:
+            runAsUser: 0
+            runAsNonRoot: false
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      containers:
+        - name: lightcat
+          # 本地构建：docker build -t lightcat:v1.3.0 .（k3s 用 k3s ctr images import）
+          # 镜像仓库：kustomize edit set image lightcat=ghcr.io/<你的名>/lightcat:v1.3.0
+          image: lightcat:v1.3.0
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: lightcat-config
+            - secretRef:
+                name: lightcat-secret
+          ports:
+            - name: cwmp
+              containerPort: 7547
+            - name: panel
+              containerPort: 8080
+          # 探针打面板端口的 /：未登录时 303 跳登录页，2xx/3xx 都算健康。
+          # 不能探 CWMP 端口——它对 GET 一律 405（协议只收 POST）。
+          startupProbe:
+            httpGet: { path: /, port: panel }
+            periodSeconds: 2
+            failureThreshold: 30          # 冷启动迁移大库最多给 60 秒
+          readinessProbe:
+            httpGet: { path: /, port: panel }
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet: { path: /, port: panel }
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 512Mi
+              # CPU 不设上限：启动迁移/大批设备上报时需要突发算力，限了反而拖慢
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true   # 只有 /data（卷）和 /tmp（emptyDir）可写
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        # storageClassName: local-path    # 按集群实际改（k3s 默认 local-path）
+        resources:
+          requests:
+            storage: 2Gi    # 库 + 固件文件；要存多个大固件就调大
