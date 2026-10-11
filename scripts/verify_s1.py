@@ -953,8 +953,10 @@ def main():
         check("区块里报了子设备台数", "共 2 台子设备" in h)
         check("子设备序列号正确", "SUBSN000001" in h and "SUBSN000002" in h)
         sec = h.split("FTTR 子设备", 1)[1]
-        # 只看每行的第一个单元格（就是实例号），别把后面的“信号=0”当成实例号
-        insts = re.findall(r'<tr>\s*<td class="mono">(\d+)</td>', sec)
+        # 只看每行的第一个单元格（就是实例号），别把后面的“信号=0”当成实例号。
+        # 实例号是纯数字标识符，模板上标了 nowrap（见「排版：标识符不断行」），
+        # 所以这里要跟着匹配 mono nowrap。
+        insts = re.findall(r'<tr>\s*<td class="mono[^"]*">(\d+)</td>', sec)
         check("实例号按设备自报的不连续编号显示（1 / 4）",
               insts[:2] == ["1", "4"], insts)
         check("显示了子设备采集时间", "采集" in sec)
