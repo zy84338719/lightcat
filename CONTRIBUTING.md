@@ -128,7 +128,7 @@ CGO_ENABLED=0
 gofmt -l . | grep -v '^reference/'     # 期望：无输出
 go vet ./...                           # 期望：无输出
 go test ./...                          # 期望：全部 ok
-bash scripts/verify-s1.sh              # 期望：全部通过（当前 373 项）
+bash scripts/verify-s1.sh              # 期望：全部通过（当前 415 项）
 bash scripts/verify-interop.sh         # 期望：8 / 0（需要 node 与 reference/genieacs-sim）
 ```
 

@@ -218,7 +218,7 @@ CLI 一次性采集与服务端内建轮询（`-ontweb-url` 等配置）两条�
 | `-alert-cooldown` | `ACS_ALERT_COOLDOWN` | `6h` | 同设备同类告警的冷却窗口 |
 | `-files-dir` | `ACS_FILES_DIR` | `files` | 固件/配置文件库目录 |
 | `-tls-cert` / `-tls-key` | `ACS_TLS_CERT` / `ACS_TLS_KEY` | 空 | HTTPS 证书/私钥（PEM，成对配置后 ACS 与面板一起切 TLS）|
-| `-api-token` | `ACS_API_TOKEN` | 空 | `/api` 与 `/metrics` 的 Bearer token（空 = 只认面板登录态）|
+| `-api-token` | `ACS_API_TOKEN` | 空 | `/api` 与 `/metrics` 的 Bearer token（**配了就必须校验**，见「部署与运维」）|
 
 ### 面板登录
 
@@ -278,8 +278,31 @@ TransferComplete(CommandKey) 回报成败，任务历史可见；接受后 2 小
 
 - `-tls-cert` + `-tls-key`（成对）后 ACS 与面板两个监听一起切 HTTPS；证书读不了启动即报错。
 - `/metrics`：Prometheus 文本格式（设备数/在线数/任务/告警等 gauge，零第三方依赖）；
-  开了面板鉴权时，`/metrics` 与 `/api/*` 认两种凭据：面板登录 cookie 或
+  `/metrics` 与 `/api/*` 认两种凭据：面板登录 cookie 或
   `Authorization: Bearer <token>`（`-api-token` 配置，常量时间比较），未认证回 401 JSON。
+  **配了 `-api-token` 就一定校验**，与是否启用面板账号无关（v1.4.0 起；
+  之前只配 token 而不开面板账号时，`/api/*` 实际全网可读，token 形同虚设）。
+  不配 token 时则跟随面板自身鉴权：开了账号要登录态，没开就是公开部署。
+- **设置页一键对接**：面板「设置」页底部可下载两份现成的配置 ——
+  **Prometheus 抓取配置**（按当前实例生成：可达地址已填好、配了 token 就带上
+  Bearer 段，并进 `prometheus.yml` 即可）与 **Grafana 看板 JSON**（导入后数据源选
+  自己的 Prometheus）。两者对 `/metrics` 实际暴露的十个指标是双向对齐的，
+  看板不会引用不存在的指标。改过 token 记得重新下载。
+- 抓取端点默认是 `127.0.0.1:<面板端口>`；Prometheus 与面板不在同一台机器时，
+  把监听地址改成可被 Prometheus 访问的网卡地址。
+
+### 设备清单页（/inventory）
+
+概览页是运营看板（在线状态 / 收光榜 / 告警，按筛选裁剪）；**清单页**是资产盘点视角：
+不筛选、不裁列，在线与离线、历史上纳管过的都在，连低频字段（来源 IP、WAN 口 IP、
+首次纳管时间、上报周期）也一并列出，直到手动删除为止。两个页面刻意分工 ——
+日常运维看概览，年底盘点看清单。
+
+### 使用帮助（/help）
+
+顶栏「帮助」入口。第一次部署最该知道的事都在这儿：这是什么、首次接入的四步
+（ACS URL 怎么填、为什么不能填 `127.0.0.1`）、各页面职责、常见问题、版本与升级方式。
+不必先去翻仓库文档。
 
 ### 标签、收光榜与 CSV 导出
 
@@ -323,6 +346,8 @@ scripts/loadtest.sh -n 200 -e 4484      # 只跑一档（-e = 每台 X_HW_APDevi
 
 ```
 cmd/lightcat/            程序入口（监听、优雅退出、双端口路由）
+idl/                    API 契约（hz 注解的 proto）：/api/* 的路由与请求形态以它为准
+biz/                    hz 生成的三层（router 路由 / handler 薄壳）；handler 委托给 internal/web 的服务层
 internal/cwmp/      协议核心：SOAP 编解码、会话、任务、诊断、Connection Request
 internal/store/     SQLite：设备 / 参数 / 任务 / 上报记录（迁移走 user_version）
 internal/web/       Web UI 与 JSON API（模板 + 少量原生 JS，无前端框架）

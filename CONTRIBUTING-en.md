@@ -172,7 +172,7 @@ CGO_ENABLED=0
 gofmt -l . | grep -v '^reference/'     # expect: no output
 go vet ./...                           # expect: no output
 go test ./...                          # expect: all ok
-bash scripts/verify-s1.sh              # expect: all pass (373 checks at the moment)
+bash scripts/verify-s1.sh              # expect: all pass (415 checks at the moment)
 bash scripts/verify-interop.sh         # expect: 8 / 0 (needs node and reference/genieacs-sim)
 ```
 

@@ -247,7 +247,7 @@ uppercased, hyphens replaced with underscores).
 | `-alert-cooldown` | `ACS_ALERT_COOLDOWN` | `6h` | Cooldown window for same-device same-kind alerts |
 | `-files-dir` | `ACS_FILES_DIR` | `files` | Directory of the firmware/config file library |
 | `-tls-cert` / `-tls-key` | `ACS_TLS_CERT` / `ACS_TLS_KEY` | empty | HTTPS certificate/key (PEM; both set = ACS and panel switch to TLS) |
-| `-api-token` | `ACS_API_TOKEN` | empty | Bearer token for `/api` and `/metrics` (empty = panel session only) |
+| `-api-token` | `ACS_API_TOKEN` | empty | Bearer token for `/api` and `/metrics` (**enforced once set**, see Deployment) |
 
 ### Panel login
 
@@ -313,9 +313,34 @@ without it the panel host is used as a fallback with an explicit warning.
 `-tls-cert` + `-tls-key` (PEM, must be a pair) switch both listeners to TLS; an unreadable certificate
 fails fast at startup. `GET /metrics` serves Prometheus text format (0.0.4) built from a single `Stats()`
 query — devices/online/probing, stored params, tasks (pending/running/failed), and the capped sizes of the
-inform/alert/optical-history tables (gauges, honestly — not counters). When panel auth is on, `/api/*` and
-`/metrics` accept either the panel session cookie or `Authorization: Bearer <token>` (`-api-token`,
-constant-time comparison); unauthenticated machine endpoints get 401 JSON, never a login redirect.
+inform/alert/optical-history tables (gauges, honestly — not counters). `/api/*` and `/metrics` accept either
+the panel session cookie or `Authorization: Bearer <token>` (`-api-token`, constant-time comparison);
+unauthenticated machine endpoints get 401 JSON, never a login redirect. Setting `-api-token` always
+enforces it, whether or not panel accounts are enabled (since v1.4.0; before that, configuring a token
+without enabling panel auth left `/api/*` readable by anyone who could reach the port). With no token
+configured, machine endpoints follow the panel's own auth: session required when accounts are enabled,
+open otherwise.
+- **One-click wiring from the Settings page**: the panel can hand you two ready-to-use files — a
+  **Prometheus scrape config** generated for the running instance (reachable address already filled
+  in, Bearer block included when a token is set; merge it into `prometheus.yml`) and a **Grafana
+  dashboard JSON** (import it, then pick your own Prometheus as the data source). Both cover exactly
+  the ten metrics `/metrics` exposes — the dashboard never references a metric that does not exist.
+  Re-download after changing the token. The target defaults to `127.0.0.1:<panel port>`; if Prometheus
+  runs on another host, bind the panel to an address Prometheus can reach.
+
+### Inventory page (/inventory)
+
+The overview is an operations board (online state / weakest-RX ranking / alerts, trimmed by the
+current filter). The **inventory page** is an asset-count view: no filters, no trimmed columns —
+online and offline alike, plus everything ever managed, down to the low-traffic fields (source IP,
+WAN IP, first-seen time, inform interval), until you delete the device. The split is deliberate:
+day-to-day on the overview, year-end stocktaking here.
+
+### Help (/help)
+
+A "Help" entry in the top bar carries what a first-time deployment most needs: what this is, the four
+steps to onboard a device (what to put in the ACS URL, why `127.0.0.1` is wrong), what each page is
+for, common questions, and how to upgrade. No need to go hunting through the repo docs first.
 
 ### Tags, weakest-RX board and CSV export
 
@@ -362,6 +387,8 @@ Methodology and full data in `docs/notes/loadtest.md`.
 
 ```
 cmd/lightcat/            program entry point (listeners, graceful shutdown, dual-port routing)
+idl/                    API contract (hz-annotated proto); routes and request shape for /api/* come from it
+biz/                    hz-generated three layers (router / thin handlers); handlers delegate to internal/web
 internal/cwmp/      protocol core: SOAP encode/decode, sessions, tasks, diagnostics, Connection Request
 internal/store/     SQLite: devices / parameters / tasks / inform records (migrations via user_version)
 internal/web/       web UI and JSON API (templates + a little vanilla JS, no frontend framework)
