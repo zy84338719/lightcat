@@ -1,0 +1,37 @@
+{{/* 共享顶栏：所有面板页统一用 {{template "topnav" .}} 渲染，别再各页手抄。
+
+数据契约（各 handler 的 data + pageCommon 兜底）：
+  .Section      devices / alerts / presets / firmware / settings —— 高亮当前栏目；
+                不在导航里的页面（设备详情、无线编辑、404）归到 devices 或留空
+  .CanRefresh   true = 显示「自动刷新 5s」按钮（概览页与设备详情页；表单编辑页
+                一律不给，免得自动刷新把没提交的表单刷没）
+  .AlertCount   告警徽标计数（pageCommon 统一查询；读不到就不显示数字）
+  .AuthOn / .OtherLang / .OtherLangName   来自 pageCommon
+
+注意：lang 切换链接的写法（class="ghost" href="?lang=…"）是验收脚本正则的一部分
+（英文页断言前会把语言切换器剥掉），改它要同步改 verify_s1.py。 */}}
+{{define "topnav"}}
+<header class="top">
+  <h1><a href="/">{{T "LightCat 光猫管家"}}</a></h1>
+  <nav class="nav">
+    <a class="ghost {{if eq .Section "devices"}}active{{end}}" href="/">{{T "设备列表"}}</a>
+    <a class="ghost {{if eq .Section "alerts"}}active{{end}}" href="/alerts"
+       title='{{T "阈值告警记录（收光过低 / 过温 / 光口异常 / 离线）"}}'>{{T "告警"}}{{if .AlertCount}}（{{.AlertCount}}）{{end}}</a>
+    <a class="ghost {{if eq .Section "presets"}}active{{end}}" href="/presets"
+       title='{{T "预设：事件/条件命中时自动下发参数"}}'>{{T "预设"}}</a>
+    <a class="ghost {{if eq .Section "firmware"}}active{{end}}" href="/firmware"
+       title='{{T "固件与文件：上传并下发到设备"}}'>{{T "固件"}}</a>
+    <a class="ghost {{if eq .Section "settings"}}active{{end}}" href="/settings">{{T "设置"}}</a>
+  </nav>
+  <div class="spacer"></div>
+  {{if .CanRefresh}}
+  <button id="autorefresh" class="ghost" type="button" aria-pressed="false"
+          title='{{T "每 5 秒自动刷新本页（在线状态、任务进度会自己变）"}}'>{{T "自动刷新 5s：关"}}</button>
+  {{end}}
+  <button id="theme-toggle" class="ghost" type="button" title='{{T "切换日间 / 夜间模式"}}'>{{T "主题"}}</button>
+  <a class="ghost" href="?lang={{.OtherLang}}" title='{{T "切换界面语言"}}'>{{.OtherLangName}}</a>
+  {{if .AuthOn}}
+  <form method="post" action="/logout"><button type="submit" class="ghost" title='{{T "退出登录"}}'>{{T "退出"}}</button></form>
+  {{end}}
+</header>
+{{end}}

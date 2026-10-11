@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='15' fill='%234da3ff'/%3E%3Cpath d='M15 41a24 24 0 0 1 34 0' stroke='white' stroke-width='5' fill='none' stroke-linecap='round'/%3E%3Cpath d='M22 48a14 14 0 0 1 20 0' stroke='white' stroke-width='5' fill='none' stroke-linecap='round'/%3E%3Ccircle cx='32' cy='54' r='3.5' fill='white'/%3E%3C/svg%3E">
+<meta name="color-scheme" content="dark light">
+<title>{{T "固件 · LightCat 光猫管家"}}</title>
+<link rel="stylesheet" href="/static/style.css">
+<script>
+  // 在样式生效之前把主题定下来，避免刷新时先闪一下暗色
+  (function () {
+    try {
+      var t = localStorage.getItem("theme");
+      if (t !== "light" && t !== "dark") {
+        t = (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches)
+          ? "light" : "dark";
+      }
+      document.documentElement.setAttribute("data-theme", t);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "dark");
+    }
+  })();
+</script>
+</head>
+<body>
+{{template "topnav" .}}
+
+<main>
+  <h2>{{T "固件与文件"}}</h2>
+  <div class="hint page-intro">
+    {{T "上传的固件/配置文件存在服务端文件库里；「下发」给设备入队一条 Download 任务，设备下次会话收到指令后**自己来拉文件**（内置文件服务），传完以 TransferComplete 回报成败，任务历史里能看到结果。"}}
+  </div>
+  {{if not .HasACSURL}}
+  <div class="notice">{{T "未配置 -acs-url：下发时文件地址会按面板当前访问地址拼，设备不一定可达。生产部署建议配置设备视角的 ACS 对外地址（如 http://10.0.0.1:7547）。"}}</div>
+  {{end}}
+  {{if .Notice}}
+  <div class="notice {{if not .NoticeErr}}ok{{end}}">{{TS .Notice}}</div>
+  {{end}}
+
+  {{if .Files}}
+  <table>
+    <thead>
+      <tr>
+        <th>{{T "名称"}}</th>
+        <th>{{T "类型"}}</th>
+        <th>{{T "版本"}}</th>
+        <th>{{T "适用型号"}}</th>
+        <th>{{T "大小"}}</th>
+        <th>SHA256</th>
+        <th>{{T "上传时间"}}</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Files}}
+      <tr>
+        <td>{{.Name}}</td>
+        <td>{{TS .Type}}</td>
+        <td class="mono">{{if .Version}}{{.Version}}{{else}}<span class="hint">—</span>{{end}}</td>
+        <td>{{if .Model}}{{.Model}}{{else}}<span class="hint">{{T "通用"}}</span>{{end}}</td>
+        <td class="mono">{{.Size}}</td>
+        <td class="mono hint" title="{{.SHA256}}">{{.SHAShort}}…</td>
+        <td class="mono">{{fmtTime .At}}</td>
+        <td>
+          <form method="post" action="/firmware/{{.ID}}/delete" style="display:inline"
+                data-confirm='{{T "确定删除这份文件吗？已在排队/进行中的下载会失败。"}}'>
+            <button type="submit" class="ghost danger-link">{{T "删除"}}</button>
+          </form>
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  <div class="hint">{{T "共 %d 条" (len .Files)}}</div>
+  {{else}}
+  <div class="empty">{{T "文件库是空的，先上传一份固件。"}}</div>
+  {{end}}
+
+  <h3>{{T "上传文件"}}</h3>
+  <form method="post" action="/firmware/upload" enctype="multipart/form-data" class="preset-form">
+    <div class="wrow">
+      <div class="wlabel">{{T "文件"}}</div>
+      <div class="winput"><input type="file" name="file" required></div>
+    </div>
+    <div class="wrow">
+      <div class="wlabel">{{T "类型"}}</div>
+      <div class="winput">
+        <select name="file_type">
+          {{range .Types}}<option value="{{.}}">{{TS (index $.TypeLabels .)}}</option>{{end}}
+        </select>
+      </div>
+    </div>
+    <div class="wrow">
+      <div class="wlabel">{{T "版本"}}</div>
+      <div class="winput"><input type="text" name="version" placeholder='{{T "如 V5R023C10S200（可空）"}}'></div>
+    </div>
+    <div class="wrow">
+      <div class="wlabel">{{T "适用型号"}}</div>
+      <div class="winput"><input type="text" name="model" placeholder='{{T "如 V271-20（空 = 通用）"}}'></div>
+    </div>
+    <div class="wrow">
+      <div class="wlabel"></div>
+      <div class="winput"><button type="submit">{{T "上传"}}</button></div>
+    </div>
+  </form>
+
+  <h3>{{T "下发到设备"}}</h3>
+  {{if and .Files .Devices}}
+  <form method="post" action="/firmware/deploy" class="preset-form"
+        data-confirm='{{T "确定给这台设备下发这份文件吗？固件下发成功后设备通常会自动重启。"}}'>
+    <div class="wrow">
+      <div class="wlabel">{{T "设备"}}</div>
+      <div class="winput">
+        <select name="device_id" required>
+          {{range .Devices}}<option value="{{.ID}}">{{.Name}}{{if not .Online}}（{{TS "离线"}}）{{end}}</option>{{end}}
+        </select>
+      </div>
+    </div>
+    <div class="wrow">
+      <div class="wlabel">{{T "文件"}}</div>
+      <div class="winput">
+        <select name="file_id" required>
+          {{range .Files}}<option value="{{.ID}}">{{.Name}}{{if .Version}} · {{.Version}}{{end}}</option>{{end}}
+        </select>
+      </div>
+    </div>
+    <div class="wrow">
+      <div class="wlabel">{{T "延迟（秒）"}}</div>
+      <div class="winput">
+        <input type="text" name="delay" value="0" inputmode="numeric" style="width:120px">
+        <div class="hint">{{T "批量升级时错峰用（DelaySeconds）；0 = 设备收到指令就拉。"}}</div>
+      </div>
+    </div>
+    <div class="wrow">
+      <div class="wlabel"></div>
+      <div class="winput"><button type="submit" class="danger">{{T "下发"}}</button></div>
+    </div>
+  </form>
+  {{else}}
+  <div class="hint">{{T "有文件、也有纳管设备时才能下发。"}}</div>
+  {{end}}
+</main>
+
+<script>window.I18N = {{.I18NJSON}};</script>
+<script src="/static/app.js"></script>
+</body>
+</html>

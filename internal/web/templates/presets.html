@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='15' fill='%234da3ff'/%3E%3Cpath d='M15 41a24 24 0 0 1 34 0' stroke='white' stroke-width='5' fill='none' stroke-linecap='round'/%3E%3Cpath d='M22 48a14 14 0 0 1 20 0' stroke='white' stroke-width='5' fill='none' stroke-linecap='round'/%3E%3Ccircle cx='32' cy='54' r='3.5' fill='white'/%3E%3C/svg%3E">
+<meta name="color-scheme" content="dark light">
+<title>{{T "预设 · LightCat 光猫管家"}}</title>
+<link rel="stylesheet" href="/static/style.css">
+<script>
+  // 在样式生效之前把主题定下来，避免刷新时先闪一下暗色
+  (function () {
+    try {
+      var t = localStorage.getItem("theme");
+      if (t !== "light" && t !== "dark") {
+        t = (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches)
+          ? "light" : "dark";
+      }
+      document.documentElement.setAttribute("data-theme", t);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "dark");
+    }
+  })();
+</script>
+</head>
+<body>
+{{template "topnav" .}}
+
+<main>
+  <h2>{{T "预设"}}</h2>
+  <div class="hint page-intro">
+    {{T "「什么事件 / 什么条件下，自动对设备做哪串操作」——设备上报命中时，动作在同一次会话里按序下发，不用等下一轮周期。编辑预设会清掉它的触发记录（改过的预设重新生效一次）。"}}
+  </div>
+  {{if .Notice}}
+  <div class="notice {{if not .NoticeErr}}ok{{end}}">{{TS .Notice}}</div>
+  {{end}}
+
+  {{if .Presets}}
+  <table>
+    <thead>
+      <tr>
+        <th>{{T "名称"}}</th>
+        <th>{{T "触发"}}</th>
+        <th>{{T "条件"}}</th>
+        <th>{{T "动作"}}</th>
+        <th>{{T "状态"}}</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Presets}}
+      <tr>
+        <td>{{.Name}}{{if .Once}} <span class="hint">{{TS "每台一次"}}</span>{{end}}</td>
+        <td>{{TS .Trigger}}</td>
+        <td class="mono">{{if .Cond}}{{.Cond}}{{else}}<span class="hint">—</span>{{end}}</td>
+        <td>{{TS .Summary}}</td>
+        <td>
+          <form method="post" action="/presets/{{.ID}}/toggle" style="display:inline">
+            <input type="hidden" name="enable" value="{{if .Enabled}}0{{else}}1{{end}}">
+            <button type="submit" class="ghost" style="border:0;cursor:pointer">
+              <span class="badge {{if .Enabled}}on{{else}}off{{end}}">{{if .Enabled}}{{T "已启用"}}{{else}}{{T "已停用"}}{{end}}</span>
+            </button>
+          </form>
+        </td>
+        <td>
+          <form method="post" action="/presets/{{.ID}}/delete" style="display:inline"
+                data-confirm='{{T "确定删除这条预设吗？"}}'>
+            <button type="submit" class="ghost danger-link" title='{{T "删除"}}'>{{T "删除"}}</button>
+          </form>
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  <div class="hint">{{T "共 %d 条" (len .Presets)}}</div>
+  {{else}}
+  <div class="empty">{{T "还没有预设。下面建一条：比如「首次纳管时把周期上报间隔写成 300 秒」。"}}</div>
+  {{end}}
+
+  <h3>{{T "新建预设"}}</h3>
+  <form method="post" action="/presets" class="preset-form">
+    <div class="wrow">
+      <div class="wlabel">{{T "名称"}}</div>
+      <div class="winput"><input type="text" name="name" required placeholder='{{T "例如：纳管即配好周期上报"}}'></div>
+    </div>
+
+    <div class="wrow">
+      <div class="wlabel">{{T "触发事件"}}</div>
+      <div class="winput checks">
+        {{range .EventChoices}}
+        <label class="chk"><input type="checkbox" name="events" value="{{.}}"> {{.}}</label>
+        {{end}}
+        <label class="chk"><input type="checkbox" name="new_device"> {{T "首次纳管"}}</label>
+      </div>
+    </div>
+
+    <div class="wrow">
+      <div class="wlabel">{{T "条件（可选）"}}</div>
+      <div class="winput condline">
+        <input type="text" name="cond_param" placeholder='{{T "参数名后缀，如 ModelName"}}'>
+        <select name="cond_op">
+          {{range .CondOps}}<option value="{{.}}">{{.}}</option>{{end}}
+        </select>
+        <input type="text" name="cond_value" placeholder='{{T "比较值（exists 不用填）"}}'>
+      </div>
+    </div>
+
+    <div class="wrow">
+      <div class="wlabel">{{T "动作"}}</div>
+      <div class="winput">
+        <textarea name="actions" rows="4" required placeholder='SET InternetGatewayDevice.ManagementServer.PeriodicInformInterval=300|unsignedInt&#10;GET InternetGatewayDevice.DeviceInfo.SoftwareVersion'></textarea>
+        <div class="hint">{{T "每行一个动作：SET 参数名=值（可用 |类型 指定 unsignedInt 等）；GET 参数名。# 开头是注释。"}}</div>
+      </div>
+    </div>
+
+    <div class="wrow">
+      <div class="wlabel"></div>
+      <div class="winput checks">
+        <label class="chk"><input type="checkbox" name="once" checked> {{T "每台设备只触发一次"}}</label>
+      </div>
+    </div>
+
+    <div class="wrow">
+      <div class="wlabel"></div>
+      <div class="winput"><button type="submit">{{T "创建预设"}}</button></div>
+    </div>
+  </form>
+</main>
+
+<script>window.I18N = {{.I18NJSON}};</script>
+<script src="/static/app.js"></script>
+</body>
+</html>

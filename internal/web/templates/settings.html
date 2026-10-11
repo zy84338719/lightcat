@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='15' fill='%234da3ff'/%3E%3Cpath d='M15 41a24 24 0 0 1 34 0' stroke='white' stroke-width='5' fill='none' stroke-linecap='round'/%3E%3Cpath d='M22 48a14 14 0 0 1 20 0' stroke='white' stroke-width='5' fill='none' stroke-linecap='round'/%3E%3Ccircle cx='32' cy='54' r='3.5' fill='white'/%3E%3C/svg%3E">
+<meta name="color-scheme" content="dark light">
+<title>{{T "设置 · LightCat 光猫管家"}}</title>
+<link rel="stylesheet" href="/static/style.css">
+<script>
+  // 在样式生效之前把主题定下来，避免刷新时先闪一下暗色
+  (function () {
+    try {
+      var t = localStorage.getItem("theme");
+      if (t !== "light" && t !== "dark") {
+        t = (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches)
+          ? "light" : "dark";
+      }
+      document.documentElement.setAttribute("data-theme", t);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "dark");
+    }
+  })();
+</script>
+</head>
+<body>
+{{template "topnav" .}}
+
+<main>
+  <h2>{{T "设置"}}</h2>
+  {{if .Notice}}
+  <div class="notice {{if not .NoticeErr}}ok{{end}}">{{TS .Notice}}</div>
+  {{end}}
+
+  <table class="kv">
+    <tbody>
+      <tr>
+        <th>ACS {{T "监听（CWMP）"}}</th>
+        <td class="mono">{{.Runtime.ACSListen}}</td>
+      </tr>
+      <tr>
+        <th>{{T "面板监听"}}</th>
+        <td class="mono">{{if .Runtime.WebListen}}{{.Runtime.WebListen}}{{else}}{{T "与 ACS 同一端口"}}{{end}}</td>
+      </tr>
+      <tr>
+        <th>{{T "访问控制"}}</th>
+        <td>
+          {{if .WebAuth}}<span class="badge on">{{T "已启用"}}</span> <span class="mono">{{.WebUser}}</span>
+          {{else}}<span class="badge off">{{T "未启用"}}</span>{{end}}
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  {{if .PendingPorts}}
+  <div class="notice" style="margin-top:12px">
+    <div>{{T "监听地址已保存，重启服务后生效。"}}</div>
+    <div class="hint" style="margin:6px 0">{{T "重启只断几秒；新端口起不来会自动退回旧地址。设备侧配的 ACS 地址若也改了，记得同步改。"}}</div>
+    {{if .CanRestart}}
+    <form method="post" action="/settings/restart" style="margin-top:8px"
+          data-confirm='{{T "确定现在重启服务吗？重启期间面板会短暂断开。"}}'>
+      <button type="submit">{{T "立即重启服务"}}</button>
+      <span class="hint">{{T "也可以稍后自己重启。"}}</span>
+    </form>
+    {{else}}
+    <div class="hint" style="margin-top:8px">{{T "重启用你自己平时的办法：systemctl restart acs 或脚本里的 restart。"}}</div>
+    {{end}}
+  </div>
+  {{end}}
+
+  <form method="post" action="/settings" class="wform" style="margin-top:22px">
+    <h3>{{T "监听地址"}}</h3>
+    <div class="wrow">
+      <div class="wlabel">ACS {{T "监听（CWMP）"}}</div>
+      <div class="winput"><input type="text" name="acs_listen" value="{{.StoredListen}}" placeholder=":9090"></div>
+    </div>
+    <div class="wrow">
+      <div class="wlabel">{{T "面板监听"}}</div>
+      <div class="winput"><input type="text" name="web_listen" value="{{.StoredWebListen}}" placeholder='{{T "与 ACS 同一端口"}}'></div>
+    </div>
+
+    <h3>{{T "访问控制"}}</h3>
+    <div class="wrow">
+      <div class="wlabel">{{T "账号密码保护"}}</div>
+      <div class="winput">
+        <label class="chk">
+          <input type="checkbox" name="auth" value="1" {{if .WebAuth}}checked{{end}}>
+          <span>{{T "启用"}}</span>
+        </label>
+      </div>
+    </div>
+    <div class="wrow">
+      <div class="wlabel">{{T "账号"}}</div>
+      <div class="winput"><input type="text" name="web_user" value="{{.WebUser}}" placeholder="admin"></div>
+    </div>
+    <div class="wrow">
+      <div class="wlabel">{{T "新密码"}}</div>
+      <div class="winput">
+        <input type="password" name="web_pass" value="" placeholder="{{if .HasPassword}}{{T "留空表示不修改"}}{{else}}{{T "至少 6 位"}}{{end}}">
+      </div>
+    </div>
+    <div class="wrow">
+      <div class="wlabel">{{T "确认密码"}}</div>
+      <div class="winput"><input type="password" name="web_pass2" value=""></div>
+    </div>
+
+    <div class="wrow">
+      <div class="wlabel"></div>
+      <div class="winput"><button type="submit">{{T "保存"}}</button></div>
+    </div>
+  </form>
+</main>
+
+<script>window.I18N = {{.I18NJSON}};</script>
+<script src="/static/app.js"></script>
+</body>
+</html>

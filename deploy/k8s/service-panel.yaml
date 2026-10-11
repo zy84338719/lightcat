@@ -1,0 +1,19 @@
+# 面板（管理侧）入口：默认 ClusterIP 只进集群内网，人通过 Ingress / port-forward 访问：
+#   kubectl -n lightcat port-forward svc/lightcat-panel 8080:8080   # 然后开 http://127.0.0.1:8080/
+# 想直接节点端口暴露就改 type: NodePort（并可固定 nodePort: 30080）。
+# Prometheus 抓 /metrics 也是打这个 Service（带 Bearer token，见 Secret 的 ACS_API_TOKEN）。
+apiVersion: v1
+kind: Service
+metadata:
+  name: lightcat-panel
+  labels:
+    app.kubernetes.io/name: lightcat
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: lightcat
+  ports:
+    - name: panel
+      port: 8080
+      targetPort: panel
+      protocol: TCP

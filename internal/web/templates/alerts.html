@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='15' fill='%234da3ff'/%3E%3Cpath d='M15 41a24 24 0 0 1 34 0' stroke='white' stroke-width='5' fill='none' stroke-linecap='round'/%3E%3Cpath d='M22 48a14 14 0 0 1 20 0' stroke='white' stroke-width='5' fill='none' stroke-linecap='round'/%3E%3Ccircle cx='32' cy='54' r='3.5' fill='white'/%3E%3C/svg%3E">
+<meta name="color-scheme" content="dark light">
+<title>{{T "告警 · LightCat 光猫管家"}}</title>
+<link rel="stylesheet" href="/static/style.css">
+<script>
+  // 在样式生效之前把主题定下来，避免刷新时先闪一下暗色
+  (function () {
+    try {
+      var t = localStorage.getItem("theme");
+      if (t !== "light" && t !== "dark") {
+        t = (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches)
+          ? "light" : "dark";
+      }
+      document.documentElement.setAttribute("data-theme", t);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "dark");
+    }
+  })();
+</script>
+</head>
+<body>
+{{template "topnav" .}}
+
+<main>
+  <h2>{{T "告警"}}</h2>
+  <div class="hint page-intro">
+    {{T "收光过低 / 光模块过温 / 光口异常 / 设备离线时自动记录；同设备同类告警有冷却窗口，持续越限不会重复轰炸。阈值用启动参数配置（-alert-rx-low / -alert-temp-high / -alert-offline），配了 -alert-webhook 会另推一份 JSON。"}}
+  </div>
+
+  {{if .Alerts}}
+  <table>
+    <thead>
+      <tr>
+        <th>{{T "时间"}}</th>
+        <th>{{T "设备"}}</th>
+        <th>{{T "类型"}}</th>
+        <th>{{T "内容"}}</th>
+        <th>{{T "推送"}}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Alerts}}
+      <tr>
+        <td class="mono">{{fmtTime .At}}</td>
+        <td><a href="/devices/{{.DeviceID}}" class="mono">{{.Serial}}</a>{{if .Model}} <span class="hint">{{.Model}}</span>{{end}}</td>
+        <td><span class="badge {{if or (eq .Kind "offline") (eq .Kind "optic_down")}}failed{{else}}probing{{end}}">{{TS .KindLabel}}</span></td>
+        <td>{{TS .Message}}</td>
+        <td>{{if .Notified}}<span class="badge on">{{T "已推送"}}</span>{{else}}<span class="hint">—</span>{{end}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  <div class="hint">{{T "共 %d 条" .Count}}</div>
+  {{else}}
+  <div class="empty">{{T "还没有告警。"}}</div>
+  {{end}}
+</main>
+
+<script>window.I18N = {{.I18NJSON}};</script>
+<script src="/static/app.js"></script>
+</body>
+</html>
