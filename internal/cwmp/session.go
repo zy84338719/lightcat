@@ -211,6 +211,11 @@ func (m *sessionManager) dropLocked(s *Session) {
 	if s.DeviceID != 0 && m.byDevice[s.DeviceID] == s {
 		delete(m.byDevice, s.DeviceID)
 	}
+	// 关键：清掉会话对象上的 DeviceID。只从 map 删索引不够 —— 这个 *Session
+	// 可能还被别处持有（inflight 的 HTTP 请求、Cookie 重放），带着旧 DeviceID
+	// 的它一旦被继续使用，回执就会写进那台设备名下。
+	// 置 0 也让 bindDevice 的「已属于别的设备」判断重新成立（0 = 未绑定）。
+	s.DeviceID = 0
 }
 
 // janitor 定期清理超时会话。
