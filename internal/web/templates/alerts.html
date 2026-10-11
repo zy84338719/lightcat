@@ -33,7 +33,8 @@
   </div>
 
   {{if .Alerts}}
-  <table>
+  <div class="tablewrap">
+  <table class="zebra">
     <thead>
       <tr>
         <th>{{T "时间"}}</th>
@@ -46,18 +47,23 @@
     <tbody>
       {{range .Alerts}}
       <tr>
-        <td class="mono">{{fmtTime .At}}</td>
+        <td class="mono nowrap">{{fmtTime .At}}</td>
         <td><a href="/devices/{{.DeviceID}}" class="mono">{{.Serial}}</a>{{if .Model}} <span class="hint">{{.Model}}</span>{{end}}</td>
-        <td><span class="badge {{if or (eq .Kind "offline") (eq .Kind "optic_down")}}failed{{else}}probing{{end}}">{{TS .KindLabel}}</span></td>
+        <td class="nowrap"><span class="badge {{if or (eq .Kind "offline") (eq .Kind "optic_down")}}failed{{else}}probing{{end}}">{{TS .KindLabel}}</span></td>
         <td>{{TS .Message}}</td>
         <td>{{if .Notified}}<span class="badge on">{{T "已推送"}}</span>{{else}}<span class="hint">—</span>{{end}}</td>
       </tr>
       {{end}}
     </tbody>
   </table>
+  </div>
   <div class="hint">{{T "共 %d 条" .Count}}</div>
   {{else}}
-  <div class="empty">{{T "还没有告警。"}}</div>
+  <div class="empty">
+    <span class="empty-ico">{{icon "bell"}}</span>
+    <div class="empty-title">{{T "还没有告警"}}</div>
+    <div class="empty-body">{{T "收光过低 / 光模块过温 / 光口异常 / 设备离线时会自动记录在这里。"}}</div>
+  </div>
   {{end}}
 </main>
 

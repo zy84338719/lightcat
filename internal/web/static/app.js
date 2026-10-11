@@ -69,6 +69,50 @@ function wireRestartRedirect() {
 //   1. 焦点在输入框里（正在打字）—— 别把没提交的搜索词刷掉；
 //   2. 有弹窗开着 —— 别把正在看的终端列表/正在填的无线表单刷没；
 //   3. 开着的时候页面不可见？不，后台标签照刷，切回来就是新的。
+// ---------- 刷新 / 翻页的骨架反馈 ----------
+//
+// 自动刷新是整页 reload，页面会先白一下再出内容 —— 在快速轮询下这个空档
+// 尤其扎眼（每 5 秒一次）。这里在 reload 之前先铺一层灰条占位：行数与
+// 真实表格一致，行高也一致，视觉上是「数据在更新」而不是「页面空了」。
+// 同时给顶栏加 .busy，走一条顶部细进度条。
+function markBusy(ms) {
+  var tables = document.querySelectorAll("table[data-pager]");
+  var pending = [];
+  tables.forEach(function (table) {
+    var tbody = table.tBodies && table.tBodies[0];
+    if (!tbody || tbody.children.length === 0) return;
+    var cols = table.tHead && table.tHead.rows.length
+      ? table.tHead.rows[0].cells.length : 6;
+    // 占位行数取 8，不多不少：比真实行多会显得页面在「加载更多」，
+    // 比真实行少则刷新瞬间行会消失又出现，反而更跳。
+    var frag = document.createDocumentFragment();
+    for (var r = 0; r < 8; r++) {
+      var tr = document.createElement("tr");
+      tr.className = "skel-row";
+      for (var c = 0; c < cols; c++) {
+        var td = document.createElement("td");
+        var bar = document.createElement("span");
+        bar.className = "skeleton";
+        // 错开每格的起始宽度，灰条长短不一才像真实内容而不是一排等宽砖块
+        bar.style.width = (55 + ((r * 7 + c * 13) % 40)) + "%";
+        td.appendChild(bar);
+        tr.appendChild(td);
+      }
+      frag.appendChild(tr);
+    }
+    // 记下真实行，reload 之前不必还原（马上要跳走了）；
+    // 万一 reload 被浏览器拦下（如 beforeunload），还能恢复。
+    pending.push([tbody, Array.prototype.slice.call(tbody.children)]);
+    tbody.replaceChildren(frag);
+  });
+  document.body.classList.add("busy");
+  window.setTimeout(function () {
+    document.body.classList.remove("busy");
+    pending.forEach(function (p) { p[0].replaceChildren.apply(p[0], p[1]); });
+  }, ms || 900);
+}
+
+// ---------- 自动刷新 ----------
 function wireAutoRefresh() {
   var btn = document.getElementById("autorefresh");
   if (!btn) return;
@@ -97,6 +141,7 @@ function wireAutoRefresh() {
         schedule();   // 弹窗开着，跳过这一轮
         return;
       }
+      markBusy(700);
       window.location.reload();
     }, SECONDS * 1000);
   }

@@ -195,14 +195,18 @@ func init() {
 		"当前没有离线的设备": "No devices are offline",
 		"没有正在探测的设备": "No devices are being probed",
 		"看全部":       "Show all",
+		"看全部设备":     "Show all devices",
 		"标签":        "Tags",
 		"按标签筛选":     "Filter by this tag",
 		"当前标签下没有设备": "No devices carry this tag",
+		"该标签下没有设备":  "No devices carry this tag",
 		"收光最弱":      "Weakest RX power",
 		"按每台设备最近一次收光读数，从低到高（没有收光数据的不参与）。": "By each device's latest RX reading, lowest first (devices without RX data are excluded).",
 		"导出 CSV": "Export CSV",
 		"导出当前筛选结果为 CSV（UTF-8 带 BOM，Excel 直接打开）": "Export the current selection as CSV (UTF-8 with BOM; opens cleanly in Excel)",
 		"还没有设备接入。":                "No devices yet. ",
+		"还没有设备接入":                 "No devices have joined yet",
+		"去设置":                     "Open settings",
 		"把 CPE 的 ACS URL 指到本服务的":  "Point the CPE's ACS URL to ",
 		"或根路径":                    " (or just the root path)",
 		"设备下次 Inform 就会出现在这里。":    " and it will show up here on its next Inform.",
@@ -400,6 +404,8 @@ func init() {
 		"推送":     "Push",
 		"已推送":    "Pushed",
 		"还没有告警。": "No alerts yet.",
+		"还没有告警":  "No alerts",
+		"收光过低 / 光模块过温 / 光口异常 / 设备离线时会自动记录在这里。": "Low RX power, module overheating, optical port faults and offline devices are recorded here automatically.",
 		"最近告警":   "Recent alerts",
 		"查看全部告警": "View all alerts",
 		// 告警类型与消息（后端拼出来，走 TS 智能翻译；数字已预格式化成 %s）
@@ -613,5 +619,79 @@ func init() {
 func init() {
 	Register(map[string]string{
 		"API Token": "API token",
+	})
+}
+
+// 帮助页（/help）的文案。之前这一页不存在，英文模式下会整页露中文 ——
+// i18n 表的覆盖缺口和产品功能缺口是一回事：功能做了，词条没跟上。
+func init() {
+	Register(map[string]string{
+		"使用帮助 · LightCat 光猫管家": "Help · LightCat",
+		"这是什么":                 "What this is",
+		"第一次接入设备":              "Adding your first device",
+		"页面怎么用":                "How the pages work",
+		"常见问题":                 "Common questions",
+		"版本与反馈":                "Version & feedback",
+		"当前版本":                 "Current version",
+		"确认本服务已经启动":            "Make sure the service is running",
+		"启动后终端会打印 ACS 的监听地址（默认 :7547）与面板地址。面板首页现在应该还没有设备，这是正常的。": "On startup the terminal prints the ACS listen address (default :7547) and the panel URL. The panel shows no devices yet — that is expected.",
+		"把光猫的 ACS URL 指向本服务":          "Point the ONT's ACS URL at this service",
+		"在光猫的 TR-069 配置里把 ACS URL 填成": "In the ONT's TR-069 settings, set the ACS URL to ",
+		"（或根路径": " (or the root path",
+		"）。ACS URL 末尾的 IP 必须是光猫能访问到的地址，":  "). The IP in the ACS URL must be reachable **from the ONT**,",
+		"不要填 127.0.0.1 —— 那是光猫自己，不是你的面板。": "do not use 127.0.0.1 — that is the ONT itself, not your panel.",
+		"等设备主动 Inform": "Wait for the device to Inform",
+		"设备上线后会自动上报。周期通常是几分钟到一天不等（取决于设备配置），也可以在设备详情页点「采集」主动催一次。": "Once the device is up it reports on its own. The interval is usually minutes to a day (device-configured); you can also trigger it from the device page with “Collect”.",
+		"上报后设备就会出现在「设备列表」里。": "The device then appears in the device list.",
+		"没有超管账号？用 Web 适配通道":  "No superuser account? Use the Web adapter",
+		"LightCat 是光猫（ONU）的纳管与运维面板：它实现 TR-069 / CWMP 协议，让光猫主动上报参数与任务结果，把散落在各处的「设备信息、无线终端、光功率、固件升级、告警」收进一个界面。": "LightCat is a management and operations panel for ONTs. It implements TR-069 / CWMP so the ONT reports parameters and task results on its own, gathering device info, wireless clients, optical power, firmware upgrades and alerts into one place.",
+		"支持两条接入通道：有运营商超管时走标准 CWMP；没有超管时，用光猫的普通账号经 Web 适配通道（ontweb）纳管，同样只读、不改设备配置。":                            "There are two onboarding paths: with a carrier superuser account use standard CWMP; without one, manage the ONT through its ordinary account via the Web adapter (ontweb) — read-only either way.",
+		"普通账号也能纳管：跑一次一次性采集，或配 -ontweb-* 让服务端定时采。":                                                             "An ordinary account works too: run a one-off collection, or configure -ontweb-* for scheduled polling.",
+		"日常运维的主页面：在线状态、光功率、参数数一目了然。点表头可排序，搜索框支持序列号 / 备注 / 名称 / SSID。":                                         "The main operations page: online state, optical power and parameter counts at a glance. Click a column header to sort; search covers serial / note / name / SSID.",
+		"资产盘点视角：不筛选、不裁列，历史上纳管过的设备都在，连低频字段（WAN 口 IP、首次纳管时间）也列出来。":                                              "An asset-inventory view: no filters, no trimmed columns. Every device ever managed is here, including low-traffic fields (WAN IP, first-seen time).",
+		"收光过低、光模块过温、光口异常、设备离线的记录，配了 webhook 还会额外推送一份。":                                                        "Records of low RX power, overheating, optical port faults and offline devices; with a webhook configured a copy is also pushed.",
+		"「事件 + 条件命中时自动下发参数」：比如设备重连后自动把 5G 名字改回来。":                                                             "“Event + condition → set parameters automatically”, e.g. restore the 5G SSID after a device reboots.",
+		"上传固件/配置文件并下发到设备；设备自己来拉 URL，支持批量错峰。":                                                                  "Upload firmware or config files and push them to devices; the ONT fetches the URL itself, with staggered scheduling for batches.",
+		"监听端口、面板账号密码、API Token；还能一键下载 Prometheus 抓取配置与 Grafana 看板。":                                           "Listen ports, panel credentials, API token; one-click download of the Prometheus scrape config and the Grafana dashboard.",
+		"先确认光猫的 ACS URL 指向的是面板所在机器的可达地址（不是 127.0.0.1）；再看 ACS 侧有没有收到 Inform —— 面板开着自动刷新时状态会自己变。":               "First check that the ONT's ACS URL points at an address reachable from the panel host (not 127.0.0.1); then check whether the ACS side received an Inform — with auto-refresh on, the state updates by itself.",
+		"设备没出现在列表里？": "A device is not showing up?",
+		"这一台还没采到光功率。点设备详情页的「采集」下发一次读取任务，设备下次 Inform 时结果会回来。不同厂商的参数路径差异很大，认不出来时可以在「设置」里配映射表。":                                                                   "No optical reading for this device yet. Use “Collect” on the device page to queue a read; results come back on its next Inform. Vendor parameter paths differ widely — add a mapping in Settings when a reading cannot be identified.",
+		"先确认光猫的 ACS URL 指向的是面板所在机器的可达地址（不是 127.0.0.1）；First check that the ONT's ACS URL points at an address reachable from the panel host (not 127.0.0.1); ": ": ,:      ,",
+		"收光显示「-」？": "Optical power shows “-”?",
+		"在「设置」页配一个 API Token（至少 16 位），然后下载 Prometheus 抓取配置，它已经带上了可达地址与 Bearer token，并进 prometheus.yml 即可。Grafana 看板也可以在同页下载，导入后数据源选你自己的 Prometheus。": "Set an API Token (16+ characters) on the Settings page, then download the Prometheus scrape config — it already carries the reachable address and the Bearer token, just merge it into prometheus.yml. The Grafana dashboard is on the same page; import it and pick your own Prometheus as the data source.",
+		"这一台还没采到光功率。点设备详情页的「采集」下发一次读取任务，":                       "No optical reading for this device yet. Use “Collect” on the device page to queue a read; ",
+		"用环境变量 ACS_WEB_AUTH=off 起一次就能进去（救急用），进去后在「设置」里改完密码再关掉。": "Start once with ACS_WEB_AUTH=off to get in (emergency only), change the password under Settings, then turn it back off.",
+		"想让 Prometheus 抓数据？": "Want to scrape with Prometheus?",
+		"在「设置」页配一个 API Token（至少 16 位），然后下载 Prometheus 抓取配置，": "Set an API Token (16+ characters) on the Settings page, then download the Prometheus scrape config — ",
+	})
+}
+
+// 界面改造（空状态 / 帮助页 / 版本号）带进来的新词条。
+// 单开一个 init 块而不是并进上面的：那几个块各自成组（概览 / 设备 / 帮助），
+// 追加时不必和已有行做空格对齐，gofmt 会各自对齐自己的组。
+func init() {
+	Register(map[string]string{
+		"帮助": "Help",
+		"使用帮助：首次接入 / 常见问题": "Help: onboarding & FAQ",
+		"当前版本":     "Current version",
+		"看全部设备":    "Show all devices",
+		"该标签下没有设备": "No devices carry this tag",
+		"还没有设备接入":  "No devices have joined yet",
+		"还没有告警":    "No alerts",
+		"去设置":      "Open settings",
+		"收光过低 / 光模块过温 / 光口异常 / 设备离线时会自动记录在这里。": "Low RX power, module overheating, optical port faults and offline devices are recorded here automatically.",
+		"把 CPE 的 ACS URL 指到本服务的":               "Point the CPE's ACS URL at ",
+		"设备下次 Inform 就会出现在这里。":                 " — the device shows up here on its next Inform.",
+		"），设备下次 Inform 就会出现在这里。":               " — the device shows up here on its next Inform.",
+	})
+}
+
+// 帮助页最后一段的词条（单独成块：前一次批量合并时这三条被误删了，
+// 且它们与上面几段没有语义关联，值得单独留在末尾便于校对）。
+func init() {
+	Register(map[string]string{
+		"忘了面板密码？":         "Forgot the panel password?",
+		"项目与文档见仓库 README": "Project and docs: see the repository README",
+		"升级：重新下载对应架构的发布包覆盖二进制即可，无数据库迁移。": "Upgrading: download the release package for your architecture and replace the binary — no database migration.",
 	})
 }

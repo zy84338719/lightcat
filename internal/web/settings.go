@@ -107,6 +107,8 @@ type settingsView struct {
 	Section    string
 	CanRefresh bool
 	AlertCount int
+	// Version 同样要显式带（struct 不走 mergeCommon）：顶栏的品牌名后要显示版本号。
+	Version string
 }
 
 // handleSettings 渲染设置页。
@@ -136,6 +138,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	v.CanRestart = s.opt.Restart != nil
 	v.AuthOn = s.authEnabled()
 	v.Section = "settings"
+	v.Version = Version
 
 	// /metrics 抓取目标：/metrics 挂在面板监听上（单端口时与 ACS 同端口）。
 	// 监听形如 ":17550" 时补上本机地址；已经带了主机就原样展示。
