@@ -10,12 +10,12 @@
 LIGHTCAT_PASS='你的强密码' docker compose up -d
 
 # 方式二：裸 docker run（单端口模式：面板与 CWMP 共用 7547）
-docker build -t lightcat:v1.3.0 .
+docker build -t lightcat:v1.4.0 .
 docker run -d --name lightcat \
   -p 7547:7547 \
   -v ./data:/data \
   -e ACS_WEB_USER=admin -e ACS_WEB_PASS='你的强密码' \
-  lightcat:v1.3.0
+  lightcat:v1.4.0
 ```
 
 启动后：
@@ -30,7 +30,8 @@ compose 默认**双端口**（7547 只跑设备协议、8080 只开面板），�
 
 ## 配置
 
-全部配置走 `ACS_*` 环境变量（与命令行 flag 一一对应，flag 优先），常用的：
+全部配置走 `ACS_*` 环境变量（与命令行 flag 一一对应，**flag 优先**：环境变量先给默认值，
+命令行再覆盖），常用的：
 
 | 环境变量 | 默认 | 说明 |
 |---|---|---|
@@ -39,12 +40,30 @@ compose 默认**双端口**（7547 只跑设备协议、8080 只开面板），�
 | `ACS_DB` | `/data/lightcat.db`（镜像内置） | 数据库路径 |
 | `ACS_FILES_DIR` | `/data/files`（镜像内置） | 固件文件目录 |
 | `ACS_WEB_USER` / `ACS_WEB_PASS` | 空 | 面板账号，**只在首次启动（空库）种一次**；之后改密码走面板「设置」页 |
-| `ACS_API_TOKEN` | 空 | `/api` 与 `/metrics` 的 Bearer token |
+| `ACS_WEB_AUTH` | 空 | 设成 `off` 关掉面板鉴权（救急用，见下） |
+| `ACS_API_TOKEN` | 空 | `/api` 与 `/metrics` 的 Bearer token，**配了就必须校验**（见「安全备注」） |
 | `ACS_URL` | 空 | ACS 对外 URL；**固件远程升级必须配**（光猫按它来拉文件），要填光猫可达的地址 |
 | `ACS_TLS_CERT` / `ACS_TLS_KEY` | 空 | 成对配置后两个监听都切 HTTPS（证书挂进容器，见下） |
 | `TZ` | `Asia/Shanghai`（compose） | 日志时区（镜像已带 tzdata） |
 
-完整清单：`docker run --rm lightcat:v1.3.0 -help`，或 README「配置」一节。
+`docker-compose.yml` 在这些之上还包了一层更短的变量名（给 `.env` 或命令行用）：
+
+| compose 变量 | 映射到 | 默认 | 说明 |
+|---|---|---|---|
+| `LIGHTCAT_PASS` | `ACS_WEB_PASS` | **必填** | 没设会直接报错退出，防止误开无鉴权面板 |
+| `LIGHTCAT_USER` | `ACS_WEB_USER` | `admin` | |
+| `LIGHTCAT_API_TOKEN` | `ACS_API_TOKEN` | 空 | |
+| `LIGHTCAT_ACS_URL` | `ACS_URL` | 空 | 固件升级要用，建议配上 |
+| `LIGHTCAT_HEALTH_PORT` | 仅镜像内 HEALTHCHECK | `7547` | **双端口必须设成面板端口**，compose 已代劳 |
+| `TZ` | `TZ` | `Asia/Shanghai` | |
+
+`LIGHTCAT_PASS` 用的 `:?` 校验对**所有** compose 子命令生效，所以 `down`/`logs` 也要带上：
+
+```bash
+LIGHTCAT_PASS=x docker compose down
+```
+
+完整清单：`docker run --rm lightcat:v1.4.0 -help`，或 README「配置」一节。
 
 面板密码忘记时的救急：加 `-e ACS_WEB_AUTH=off` 重建容器（只关鉴权，不动数据），
 进面板改完密码再去掉。
@@ -142,4 +161,12 @@ EOF
 - 容器以非 root（uid/gid 10001）运行，只有 `/data` 可写；
 - 面板密码只种一次、PBKDF2 哈希入库，环境变量里的是明文种子，启动后可 `docker inspect`
   看到——介意就用 `ACS_WEB_AUTH=off` + 反代鉴权，或起完容器后在面板改密码并清掉环境变量；
-- `/api` 与 `/metrics` 未带 token 时回 401 JSON；token 用常量时间比较。
+- **配了 `ACS_API_TOKEN` 就必须校验**：访问 `/api` 与 `/metrics` 时，携带正确的
+  `Authorization: Bearer <token>` 或带面板登录态，二者其一即可；否则回 401 JSON。
+  token 用常量时间比较。这一条与面板账号是否启用**无关**——v1.4.0 之前这里有个洞：
+  只配了 token 而没启用面板账号时，`/api/devices`（含设备序列号、来源 IP、全部参数）
+  对能访问该端口的人全网可读，而 token 形同虚设。v1.4.0 起「配了 token 就校验」，
+  启动时若检测到配了 token 但未启用面板账号，会在日志里打一条 WARN 提醒你
+  **面板页面本身仍然公开**——想让它也受保护，得配 `ACS_WEB_USER` / `ACS_WEB_PASS`；
+- 不配 token 时：`/api` 与 `/metrics` 跟随面板自身的鉴权——面板开了账号就要登录态，
+  没开就是公开（等同于部署时就没打算设防）。
