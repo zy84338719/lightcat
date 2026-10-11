@@ -11,9 +11,9 @@ A single-binary, zero-external-dependency TR-069/CWMP ACS (Go + SQLite) for mana
 gateways: **onboard → inspect → configure → diagnose → manage sub-devices and clients**.
 
 ![CI](https://github.com/zy84338719/lightcat/actions/workflows/ci.yml/badge.svg)
-![Release](https://img.shields.io/github/v/release/zy84338719/lightcat)
-![Go](https://img.shields.io/badge/Go-1.27-00ADD8)
-![License](https://img.shields.io/badge/license-AGPL--3.0-blue)
+![Release](https://github.com/zy84338719/lightcat/actions/workflows/release.yml/badge.svg)
+![Go](docs/images/badges/go.svg)
+![License](docs/images/badges/license.svg)
 
 ## Features
 
