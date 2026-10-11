@@ -39,6 +39,32 @@ func doGetWithCookie(t *testing.T, h http.Handler, path, cookie string) *httptes
 // 模板里用到的文案必须都有英文译文 —— 这条防线专门防「改了中文忘了翻译」，
 // 因为 key 就是中文原文，中文一改 key 就变了，英文会静默回落到中文。
 func TestAllTemplateTextsTranslated(t *testing.T) {
+	// 跨行拼接的 {{T "前半" "后半" }} 必须禁止：
+	// 模板里两个相邻字面量会被 Go 拼成**一个** key（"前半后半"），
+	// 而下面的 tplKey 正则只抓得到前半段 —— 于是这条文案既进了「已翻译」
+	// 的假象，又在渲染时查不到，页面露出 %!(EXTRA string=…) / 中文原文。
+	// 这个坑在写帮助页时连踩 5 次，所以钉一条断言挡住。
+	split := regexp.MustCompile(`\{\{T\s+"[^"]*"\s*\n\s*"`)
+	if err := fs.WalkDir(assets, ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".html") {
+			return err
+		}
+		b, err := assets.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		text := string(b)
+		for _, m := range split.FindAllStringIndex(text, -1) {
+			line := strings.Count(text[:m[0]], "\n") + 1
+			snip := text[m[0] : m[0]+90]
+			t.Errorf("%s:%d 的 {{T }} 跨行拼接了字符串（key 会被 Go 拼成一整段，"+
+				"扫描抓不到、渲染也查不到）：%s…", path, line, strings.TrimSpace(snip))
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("读模板失败: %v", err)
+	}
+
 	tplKey := regexp.MustCompile(`\{\{T "([^"]+)"`)
 	jsKey := regexp.MustCompile(`t\("([^"]+)"\)`)
 
@@ -61,7 +87,7 @@ func TestAllTemplateTextsTranslated(t *testing.T) {
 			for _, m := range jsKey.FindAllStringSubmatch(text, -1) {
 				// createElement("div") 之类的会被 t\("…"\) 误伤，过滤掉已知的非文案
 				switch m[1] {
-				case "div", "span", "select", "option", "button", "textarea", "nav", "a":
+				case "div", "span", "select", "option", "button", "textarea", "nav", "a", "td", "tr":
 					continue
 				}
 				seen[m[1]] = path
@@ -122,7 +148,7 @@ func TestEnglishPagesHaveNoChinese(t *testing.T) {
 		}
 	}
 
-	for _, path := range []string{"/?lang=en", "/settings?lang=en"} {
+	for _, path := range []string{"/?lang=en", "/settings?lang=en", "/help?lang=en"} {
 		assertNoChinese(t, mux, path)
 	}
 
@@ -153,6 +179,37 @@ func TestEnglishPagesHaveNoChinese(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertNoChinese(t, mux2, "/devices/"+strconv.FormatInt(id, 10)+"?lang=en")
+}
+
+// 任何页面都不该把 fmt 的占位符错位痕迹渲染出来。
+//
+// `%!(EXTRA string=…)` / `%!d(MISSING)` 这类是 fmt.Errorf / Sprintf 的
+// 「参数个数对不上」留下的 —— 典型来源是把两段文案写进同一个 {{T "…"}}，
+// 运行时拼成一个查不到的 key，或给不含占位符的文案传了参数。
+// 中文与英文页都会中招，所以两种语言都要查。
+func TestNoFormatPlaceholderGarbage(t *testing.T) {
+	mux := newAuthTestMux(t, NewCreds("", "", nil))
+	bad := regexp.MustCompile(`%!\(|%\.\d+[a-zA-Z]`)
+	for _, lang := range []string{"", "en"} {
+		for _, path := range []string{"/", "/help", "/settings", "/inventory", "/alerts", "/presets", "/firmware"} {
+			q := path
+			if lang != "" {
+				q += "?lang=" + lang
+			}
+			w := doGet(t, mux, q)
+			if w.Code != http.StatusOK {
+				continue // 没数据的页面可能回 404/重定向，不是本测试要管的
+			}
+			if m := bad.FindString(w.Body.String()); m != "" {
+				idx := strings.Index(w.Body.String(), m)
+				snip := w.Body.String()
+				if idx > 40 {
+					snip = snip[idx-40 : idx+60]
+				}
+				t.Errorf("%s?lang=%s 渲染出了 fmt 占位符错位 %q：…%s…", path, lang, m, snip)
+			}
+		}
+	}
 }
 
 // 登录页也要能切语言（那一页不需要登录）。

@@ -88,7 +88,8 @@ func TestIndexShowsOpticalColumnsOnlyWhenReported(t *testing.T) {
 	}
 	// 没报的那台显示 -
 	row := rowFor(t, body2, "OPT-B")
-	if !strings.Contains(row, "<td class=\"mono\"><span class=\"hint\">-</span></td>") {
+	// 收光/发光两列现在带 nowrap（宽度收放但不断行），所以 class 串要跟着变
+	if !strings.Contains(row, "<td class=\"mono nowrap\"><span class=\"hint\">-</span></td>") {
 		t.Errorf("没上报的设备该显示 -：%s", row)
 	}
 }

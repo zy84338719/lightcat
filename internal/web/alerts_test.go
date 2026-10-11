@@ -47,7 +47,7 @@ func TestAlertsPage(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("状态 = %d", code)
 	}
-	if !strings.Contains(body, "还没有告警。") {
+	if !strings.Contains(body, "还没有告警") {
 		t.Error("空库应显示空态文案")
 	}
 

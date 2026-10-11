@@ -42,8 +42,8 @@
       {{range .WorstRx}}
       <tr>
         <td><a href="/devices/{{.DeviceID}}">{{.Serial}}</a>{{if .Model}} <span class="hint">{{.Model}}</span>{{end}}</td>
-        <td class="mono"><b>{{printf "%.2f" .RxDbm}}</b> dBm</td>
-        <td class="mono hint">{{fmtTime .At}}</td>
+        <td class="mono nowrap num"><b>{{printf "%.2f" .RxDbm}}</b> dBm</td>
+        <td class="mono nowrap hint">{{fmtTime .At}}</td>
       </tr>
       {{end}}
     </tbody>
@@ -88,7 +88,8 @@
     <span class="hint">{{if or .Query (ne .State "all") .TagFilter}}{{T "匹配 %d / %d 台" (len .Devices) .Total}}{{else}}{{T "共 %d 台" .Total}}{{end}}</span>
   </form>
   {{if .Devices}}
-  <table id="devices-table" data-pager="20" class="sortable">
+  <div class="tablewrap">
+  <table id="devices-table" data-pager="20" class="sortable zebra">
     <thead>
       <tr>
         <th>{{T "状态"}}</th><th>{{T "名称"}}</th><th>{{T "备注"}}</th><th>{{T "序列号"}}</th>
@@ -106,19 +107,19 @@
         <td>{{if $d.Probing}}<span class="badge probing" title='{{T "超过 %d 秒周期的 2 倍没上报，已主动探测 %d 次" $d.PeriodicInterval $d.ProbeCount}}' >{{T "探测中"}}</span>{{else if $d.Online}}<span class="badge on">{{T "在线"}}</span>{{else}}<span class="badge off">{{T "离线"}}</span>{{end}}</td>
         <td><a href="/devices/{{$d.ID}}">{{$d.DisplayName}}</a>{{range $t := $d.Tags}} <a class="badge tag" href="/?tag={{urlquery $t}}" title='{{T "按标签筛选"}}'>{{$t}}</a>{{end}}{{if $fttr}} <span class="badge fttr" title='{{T "%d 台 FTTR 子设备" $fttr}}'>FTTR ×{{$fttr}}</span>{{end}}</td>
         <td class="note" title="{{$d.Note}}">{{if $d.Note}}{{$d.Note}}{{else}}<span class="hint">-</span>{{end}}</td>
-        <td class="mono">{{$d.SerialNumber}} <button type="button" class="copybtn" data-copy="{{$d.SerialNumber}}" title='{{T "复制"}}' aria-label='{{T "复制序列号"}}'>⧉</button></td>
-        <td class="mono">{{if $d.SoftwareVersion}}{{$d.SoftwareVersion}}{{else}}-{{end}}</td>
-        <td class="mono">{{if $d.DataModelRoot}}{{dataModelLabel $d.DataModelRoot}}{{else}}<span class="hint">{{T "未知"}}</span>{{end}}</td>
-        <td class="mono">{{$d.SourceIP}}{{if and $d.ExternalIP (ne $d.ExternalIP $d.SourceIP)}}<div class="hint">{{T "外网 IP"}} {{$d.ExternalIP}}</div>{{end}}</td>
-        <td class="mono">{{fmtTime $d.LastInformAt}}{{if $d.LastEvents}}<div class="hint" title='{{T "最近一次上报的事件码"}}'>{{$d.LastEvents}}</div>{{end}}</td>
-        <td class="mono">{{$d.ParamCount}}</td>
-        <td class="mono">{{index $.ClientCounts $d.ID}}</td>
+        <td class="mono nowrap">{{$d.SerialNumber}} <button type="button" class="copybtn" data-copy="{{$d.SerialNumber}}" title='{{T "复制"}}' aria-label='{{T "复制序列号"}}'>⧉</button></td>
+        <td class="mono nowrap">{{if $d.SoftwareVersion}}{{$d.SoftwareVersion}}{{else}}-{{end}}</td>
+        <td class="mono nowrap">{{if $d.DataModelRoot}}{{dataModelLabel $d.DataModelRoot}}{{else}}<span class="hint">{{T "未知"}}</span>{{end}}</td>
+        <td class="mono nowrap">{{$d.SourceIP}}{{if and $d.ExternalIP (ne $d.ExternalIP $d.SourceIP)}}<div class="hint">{{T "外网 IP"}} {{$d.ExternalIP}}</div>{{end}}</td>
+        <td class="mono nowrap">{{fmtTime $d.LastInformAt}}{{if $d.LastEvents}}<div class="hint" title='{{T "最近一次上报的事件码"}}'>{{$d.LastEvents}}</div>{{end}}</td>
+        <td class="mono nowrap num">{{$d.ParamCount}}</td>
+        <td class="mono nowrap num">{{index $.ClientCounts $d.ID}}</td>
         {{if $.HasOptical}}
         {{$o := index $.Optical $d.ID}}
-        <td class="mono">{{if $o.Rx}}{{$o.Rx}}{{else}}<span class="hint">-</span>{{end}}</td>
-        <td class="mono">{{if $o.Tx}}{{$o.Tx}}{{else}}<span class="hint">-</span>{{end}}</td>
+        <td class="mono nowrap">{{if $o.Rx}}{{$o.Rx}}{{else}}<span class="hint">-</span>{{end}}</td>
+        <td class="mono nowrap">{{if $o.Tx}}{{$o.Tx}}{{else}}<span class="hint">-</span>{{end}}</td>
         {{end}}
-        <td>
+        <td class="nowrap">
           <form method="post" action="/devices/{{$d.ID}}/wifi">
             <button type="submit" class="ghost" {{if not $d.Online}}disabled
                     title='{{T "设备离线，等它恢复上报后再说"}}'{{end}}>{{if $bands}}{{T "重新采集"}}{{else}}{{T "采集 WiFi"}}{{end}}</button>
@@ -128,22 +129,34 @@
       {{end}}
     </tbody>
   </table>
+  </div>
   {{else if .Query}}
   <div class="empty">
     {{T "没有匹配「"}}{{.Query}}」{{T "的设备。"}}<a href="/">{{T "清除搜索"}}</a>
   </div>
   {{else if .TagFilter}}
   <div class="empty">
-    {{T "当前标签下没有设备"}}。<a href="/">{{T "看全部"}}</a>
+    <span class="empty-ico">{{icon "tag"}}</span>
+    <div class="empty-title">{{T "该标签下没有设备"}}</div>
+    <div class="empty-actions"><a class="ghost" href="/">{{T "看全部设备"}}</a></div>
   </div>
   {{else if ne .State "all"}}
   <div class="empty">
-    {{if eq .State "online"}}{{T "当前没有在线的设备"}}{{else if eq .State "offline"}}{{T "当前没有离线的设备"}}{{else}}{{T "没有正在探测的设备"}}{{end}}。<a href="/">{{T "看全部"}}</a>
+    <span class="empty-ico">{{icon "search"}}</span>
+    <div class="empty-title">{{if eq .State "online"}}{{T "当前没有在线的设备"}}{{else if eq .State "offline"}}{{T "当前没有离线的设备"}}{{else}}{{T "没有正在探测的设备"}}{{end}}</div>
+    <div class="empty-actions"><a class="ghost" href="/">{{T "看全部设备"}}</a></div>
   </div>
   {{else}}
   <div class="empty">
-    {{T "还没有设备接入。"}}<br>
-    {{T "把 CPE 的 ACS URL 指到本服务的"}} <span class="mono">/acs</span>（{{T "或根路径"}} <span class="mono">/</span>），{{T "设备下次 Inform 就会出现在这里。"}}
+    <span class="empty-ico">{{icon "monitor"}}</span>
+    <div class="empty-title">{{T "还没有设备接入"}}</div>
+    <div class="empty-body">
+      {{T "把 CPE 的 ACS URL 指到本服务的"}} <span class="mono">/acs</span>{{T "（或根路径"}}
+      <span class="mono">/</span>{{T "），设备下次 Inform 就会出现在这里。"}}
+    </div>
+    <div class="empty-actions">
+      <a class="ghost" href="/settings">{{icon "sliders"}}{{T "去设置"}}</a>
+    </div>
   </div>
   {{end}}
 

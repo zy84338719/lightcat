@@ -90,7 +90,7 @@ func TestIndexTagFilterAndWorstRx(t *testing.T) {
 	}
 	// 不存在的标签 → 空态提示
 	w = doGet(t, mux, "/?tag="+url.QueryEscape("没有这个标签"))
-	if !strings.Contains(w.Body.String(), "当前标签下没有设备") {
+	if !strings.Contains(w.Body.String(), "该标签下没有设备") {
 		t.Errorf("空标签筛选应显示空态提示")
 	}
 

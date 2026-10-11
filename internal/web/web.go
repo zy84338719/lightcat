@@ -86,6 +86,12 @@ type Options struct {
 	APIToken string
 }
 
+// Version 是面板展示用的版本号。发版时改这一处。
+//
+// 为什么要它：出问题时用户截图里带着版本号，比口头描述「我用的是最新版」
+// 可核对得多；升级前后也能一眼看出有没有换过。
+const Version = "1.4.0"
+
 // RestartMode 说明这次重启是用哪种方式完成的 —— 影响界面上怎么告诉用户
 // 「接下来会发生什么」（systemd 拉起要等它几秒，自己起的新进程则是已经就绪）。
 type RestartMode string
@@ -196,6 +202,7 @@ func Register(mux *http.ServeMux, st *store.Store, ctrl Controller, opt Options)
 	// 取件端点**不鉴权**：设备没有面板登录态，靠随机名 + 库内登记放行（见 firmware.go）
 	mux.HandleFunc("GET /files/{name}", FirmwareFileHandler(st, opt.Runtime.FilesDir))
 	mux.HandleFunc("GET /settings", guard(s.handleSettings))
+	mux.HandleFunc("GET /help", guard(s.handleHelp))
 	mux.HandleFunc("POST /settings", guard(s.handleSettingsSave))
 	// 监控对接的两份配置下载（与设置页同一套鉴权：登录管理员才能拿到，
 	// 文件里会带上当前生效的 API Token）
@@ -258,6 +265,23 @@ func Register(mux *http.ServeMux, st *store.Store, ctrl Controller, opt Options)
 		mux.HandleFunc("/", s.handleNotFoundAny)
 	}
 	return s, nil
+}
+
+// handleHelp 渲染使用帮助页：首次接入步骤、各页面职责、常见问题。
+//
+// 为什么要它：面板用户里相当一部分是第一次部署的运维，光看「还没有设备接入」
+// 不知道下一步该做什么 —— 缺的是「怎么让设备上来」这段知识。放在页面上比让
+// 人去翻 README 有效得多，也是产品完整度最直接的体现。
+func (s *Server) handleHelp(w http.ResponseWriter, r *http.Request) {
+	path := s.opt.Runtime.Path
+	if path == "" {
+		path = "/acs"
+	}
+	s.renderLang(w, r, "help.html", map[string]any{
+		"Section":    "",
+		"ACSPath":    path,
+		"CanRefresh": false,
+	})
 }
 
 // handleNotFoundAny 是 "/" 兜底的入口：GET/HEAD 给样式化 404 页；
@@ -365,6 +389,9 @@ func (s *Server) pageCommon(lang string) map[string]any {
 		"OtherLang":     otherLang(lang),
 		"OtherLangName": i18n.LangNames[otherLang(lang)],
 		"I18N":          js,
+		// 版本号进公共数据：顶栏右下角全站可见（layout.html 的 topnav），
+		// 任何页面截图都自带版本，出问题时报障能直接对上。
+		"Version": Version,
 		// 共享顶栏（layout.html 的 topnav）的兜底值：Section 空 = 不高亮任何栏目，
 		// CanRefresh 假 = 不出自动刷新按钮；页面自己给了就以页面的为准（mergeCommon 语义）
 		"Section":    "",

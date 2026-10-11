@@ -12,7 +12,7 @@
 （英文页断言前会把语言切换器剥掉），改它要同步改 verify_s1.py。 */}}
 {{define "topnav"}}
 <header class="top">
-  <h1><a href="/">{{T "LightCat 光猫管家"}}</a></h1>
+  <h1><a href="/">{{T "LightCat 光猫管家"}}{{if .Version}}<span class="ver" title='{{T "当前版本"}}'>v{{.Version}}</span>{{end}}</a></h1>
   <nav class="nav">
     <a class="ghost {{if eq .Section "devices"}}active{{end}}" href="/">{{icon "list"}}{{T "设备列表"}}</a>
     <a class="ghost {{if eq .Section "inventory"}}active{{end}}" href="/inventory"
@@ -31,6 +31,7 @@
           title='{{T "每 5 秒自动刷新本页（在线状态、任务进度会自己变）"}}'>{{T "自动刷新 5s：关"}}</button>
   {{end}}
   <button id="theme-toggle" class="ghost" type="button" title='{{T "切换日间 / 夜间模式"}}'>{{T "主题"}}</button>
+  <a class="ghost" href="/help" title='{{T "使用帮助：首次接入 / 常见问题"}}'>{{icon "info"}}{{T "帮助"}}</a>
   <a class="ghost" href="?lang={{.OtherLang}}" title='{{T "切换界面语言"}}'>{{.OtherLangName}}</a>
   {{if .AuthOn}}
   <form method="post" action="/logout"><button type="submit" class="ghost" title='{{T "退出登录"}}'>{{T "退出"}}</button></form>
