@@ -11,9 +11,9 @@
 **纳管 → 看信息 → 改配置 → 诊断 → 子设备与终端管理**。
 
 ![CI](https://github.com/zy84338719/lightcat/actions/workflows/ci.yml/badge.svg)
-![Release](https://img.shields.io/github/v/release/zy84338719/lightcat)
-![Go](https://img.shields.io/badge/Go-1.27-00ADD8)
-![License](https://img.shields.io/badge/license-AGPL--3.0-blue)
+![Release](https://github.com/zy84338719/lightcat/actions/workflows/release.yml/badge.svg)
+![Go](docs/images/badges/go.svg)
+![License](docs/images/badges/license.svg)
 
 ## 特点
 
