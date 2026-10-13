@@ -39,7 +39,7 @@ spec:
         # 你的存储驱动支持 fsGroup（云盘、Longhorn 等），或命名空间启用了 restricted
         # PSA（禁止 root init 容器）时，可以把这段删掉。
         - name: fix-data-perms
-          image: lightcat:v1.3.0          # 与主容器同一镜像（alpine 基座自带 chown）
+          image: lightcat:1.4.1           # 与主容器同一镜像（alpine 基座自带 chown）
           command: ["/bin/sh", "-c", "chown -R 10001:10001 /data"]
           securityContext:
             runAsUser: 0
@@ -49,9 +49,11 @@ spec:
               mountPath: /data
       containers:
         - name: lightcat
-          # 本地构建：docker build -t lightcat:v1.3.0 .（k3s 用 k3s ctr images import）
-          # 镜像仓库：kustomize edit set image lightcat=ghcr.io/<你的名>/lightcat:v1.3.0
-          image: lightcat:v1.3.0
+          # 直接用发布镜像（推荐，无需构建）：
+          #   kustomize edit set image lightcat=ghcr.io/zy84338719/lightcat:1.4.1
+          # 本地构建：docker build -t lightcat:1.4.1 .（k3s 用 k3s ctr images import）
+          # 注意 tag 无 v 前缀；ghcr 上另有 1.4 与 latest 两个浮动 tag。
+          image: lightcat:1.4.1
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
