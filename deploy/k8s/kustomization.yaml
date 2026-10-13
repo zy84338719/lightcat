@@ -12,8 +12,8 @@ resources:
 #  - secret.example.yaml   # 不建议：示例占位密码别进 Git 流；用命令创建（deploy/K8S.md）
 #  - ingress.yaml          # 域名 + Ingress 暴露面板（先改 host）
 
-# 用镜像仓库时覆盖镜像地址（或命令行 kustomize edit set image …）：
+# 用发布镜像时覆盖镜像地址（或命令行 kustomize edit set image …）：
 # images:
 #   - name: lightcat
-#     newName: ghcr.io/<你的名>/lightcat
-#     newTag: v1.3.0
+#     newName: ghcr.io/zy84338719/lightcat
+#     newTag: 1.4.1     # tag 无 v 前缀；另有 1.4 与 latest 两个浮动 tag

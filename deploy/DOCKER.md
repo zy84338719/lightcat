@@ -10,13 +10,16 @@
 LIGHTCAT_PASS='你的强密码' docker compose up -d
 
 # 方式二：裸 docker run（单端口模式：面板与 CWMP 共用 7547）
-docker build -t lightcat:v1.4.0 .
 docker run -d --name lightcat \
   -p 7547:7547 \
   -v ./data:/data \
   -e ACS_WEB_USER=admin -e ACS_WEB_PASS='你的强密码' \
-  lightcat:v1.4.0
+  ghcr.io/zy84338719/lightcat:1.4.1
 ```
+
+> **镜像标签没有 `v` 前缀**：发布流水线推的是 `1.4.1` / `1.4` / `latest`，
+> 不是 `v1.4.1`。写 `v1.4.1` 会拉到 404 —— 冒号后的部分才是 tag，`ghcr.io/.../lightcat`
+> 后面那个 `v` 是仓库名的一部分。
 
 启动后：
 
@@ -63,7 +66,7 @@ compose 默认**双端口**（7547 只跑设备协议、8080 只开面板），�
 LIGHTCAT_PASS=x docker compose down
 ```
 
-完整清单：`docker run --rm lightcat:v1.4.0 -help`，或 README「配置」一节。
+完整清单：`docker run --rm ghcr.io/zy84338719/lightcat:1.4.1 -help`，或 README「配置」一节。
 
 面板密码忘记时的救急：加 `-e ACS_WEB_AUTH=off` 重建容器（只关鉴权，不动数据），
 进面板改完密码再去掉。
@@ -81,8 +84,12 @@ docker compose start
 ## 升级
 
 ```bash
-git pull && docker compose build && docker compose up -d    # 源码构建
-# 或（用镜像仓库时）：docker compose pull && docker compose up -d
+# 用仓库里的 compose（默认就是本地构建）：
+git pull && docker compose build && docker compose up -d
+
+# 想用预构建镜像：把 docker-compose.yml 里的 build: . 换成
+#   image: ghcr.io/zy84338719/lightcat:1.4.1
+# 之后就是 docker compose pull && docker compose up -d
 ```
 
 注意：**容器里不要用 `deploy/update.sh`**——那是二进制/systemd 部署的自升级脚本，
