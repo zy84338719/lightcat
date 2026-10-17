@@ -49,7 +49,9 @@
       <tr>
         <td class="mono nowrap">{{fmtTime .At}}</td>
         <td><a href="/devices/{{.DeviceID}}" class="mono">{{.Serial}}</a>{{if .Model}} <span class="hint">{{.Model}}</span>{{end}}</td>
-        <td class="nowrap"><span class="badge {{if or (eq .Kind "offline") (eq .Kind "optic_down")}}failed{{else}}probing{{end}}">{{TS .KindLabel}}</span></td>
+        {{/* 已恢复的离线告警不���再打红徽章：告警是留痕的、不会自动消失，
+             两类同色的话用户扫一眼会以为设备现在还离线着。 */}}
+        <td class="nowrap">{{if .Resolved}}<span class="badge on">{{T "已恢复"}}</span>{{else}}<span class="badge {{if or (eq .Kind "offline") (eq .Kind "optic_down")}}failed{{else}}probing{{end}}">{{TS .KindLabel}}</span>{{end}}</td>
         <td>{{TS .Message}}</td>
         <td>{{if .Notified}}<span class="badge on">{{T "已推送"}}</span>{{else}}<span class="hint">—</span>{{end}}</td>
       </tr>
