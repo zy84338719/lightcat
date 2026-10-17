@@ -404,7 +404,7 @@
     {{if .Informs}}
     <div class="tablewrap">
     <table id="inform-table" data-pager="20">
-    <thead><tr><th>{{T "时间"}}</th><th>{{T "事件"}}</th><th>{{T "参数条数"}}</th><th>{{T "重试"}}</th><th>{{T "来源 IP"}}</th></tr></thead>
+    <thead><tr><th>{{T "时间"}}</th><th>{{T "事件"}}</th><th>{{T "参数条数"}}</th><th>{{T "重试"}}</th><th>{{T "来源 IP"}}</th><th>{{T "trace"}}</th></tr></thead>
     <tbody>
       {{range .Informs}}
       <tr>
@@ -413,6 +413,9 @@
         <td class="mono">{{.ParamCount}}</td>
         <td class="mono">{{.RetryCount}}</td>
         <td class="mono nowrap">{{.SourceIP}}</td>
+        {{/* trace_id 点一下就复制：用户报障时把它贴给我们，能在日志里捞出整条链。
+             老记录（升级前入库的）没有这个值，显示 "-" 而不是空白，免得看着像坏了。 */}}
+        <td class="mono nowrap">{{if .TraceID}}<span class="copyable" data-copy="{{.TraceID}}" title="{{T "点击复制"}}">{{.TraceID}}</span>{{else}}-{{end}}</td>
       </tr>
       {{end}}
     </tbody>

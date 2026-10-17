@@ -13,6 +13,9 @@ type InformRecord struct {
 	SourceIP    string
 	ParamCount  int
 	CreatedAt   time.Time
+	// TraceID 是这次 Inform 的 trace_id（同一次上报触发的所有日志行都带它）。
+	// 面板「上报记录」里显示出来，用户报障时复制它就能去日志里捞整条链。
+	TraceID string
 }
 
 // SetInformHistoryLimit 设置「每台设备保留多少条上报记录」（0 = 不限）。
@@ -52,9 +55,9 @@ func (s *Store) PruneInforms() (int64, error) {
 // InsertInform 记录一次 Inform。
 func (s *Store) InsertInform(r *InformRecord) error {
 	_, err := s.db.Exec(`INSERT INTO informs
-		(device_id, events, command_key, retry_count, current_time, source_ip, param_count, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		r.DeviceID, r.Events, r.CommandKey, r.RetryCount, r.CurrentTime, r.SourceIP, r.ParamCount, ts(time.Now()))
+		(device_id, events, command_key, retry_count, current_time, source_ip, param_count, created_at, trace_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		r.DeviceID, r.Events, r.CommandKey, r.RetryCount, r.CurrentTime, r.SourceIP, r.ParamCount, ts(time.Now()), r.TraceID)
 	if err != nil {
 		return err
 	}
@@ -70,7 +73,7 @@ func (s *Store) ListInforms(deviceID int64, limit int) ([]InformRecord, error) {
 		limit = 20
 	}
 	rows, err := s.db.Query(`SELECT id, device_id, events, command_key, retry_count,
-		current_time, source_ip, param_count, created_at
+		current_time, source_ip, param_count, created_at, trace_id
 		FROM informs WHERE device_id = ? ORDER BY id DESC LIMIT ?`, deviceID, limit)
 	if err != nil {
 		return nil, err
@@ -82,7 +85,7 @@ func (s *Store) ListInforms(deviceID int64, limit int) ([]InformRecord, error) {
 		var r InformRecord
 		var created string
 		if err := rows.Scan(&r.ID, &r.DeviceID, &r.Events, &r.CommandKey, &r.RetryCount,
-			&r.CurrentTime, &r.SourceIP, &r.ParamCount, &created); err != nil {
+			&r.CurrentTime, &r.SourceIP, &r.ParamCount, &created, &r.TraceID); err != nil {
 			return nil, err
 		}
 		r.CreatedAt = parseTS(created)

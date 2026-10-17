@@ -1,6 +1,7 @@
 package cwmp
 
 import (
+	"context"
 	"database/sql"
 	"io"
 	"log/slog"
@@ -65,7 +66,7 @@ func TestOnParamsStoredFiresAfterGPV(t *testing.T) {
 		{"InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.TXPower", "2.8"},
 	})
 	w := httptest.NewRecorder()
-	srv.onGetParameterValuesResponse(w, newHookSession(devID), env, env.Method)
+	srv.onGetParameterValuesResponse(context.Background(), w, newHookSession(devID), env, env.Method)
 
 	if gotDevice != devID {
 		t.Fatalf("钩子拿到的设备 = %d，期望 %d", gotDevice, devID)
@@ -91,7 +92,7 @@ func TestOnParamsStoredPanicContained(t *testing.T) {
 
 	env := gpvResponseEnv(t, [][2]string{{"InternetGatewayDevice.DeviceInfo.ModelName", "X"}})
 	w := httptest.NewRecorder()
-	srv.onGetParameterValuesResponse(w, newHookSession(devID), env, env.Method)
+	srv.onGetParameterValuesResponse(context.Background(), w, newHookSession(devID), env, env.Method)
 
 	// 会话没被打挂：参数照样入库、响应照样写出（无任务时 204 结束会话）
 	if p, ok, _ := srv.store.GetParam(devID, "InternetGatewayDevice.DeviceInfo.ModelName"); !ok || p.Value != "X" {

@@ -31,6 +31,7 @@ import (
 	"github.com/zy84338719/lightcat/internal/ontweb"
 	"github.com/zy84338719/lightcat/internal/restart"
 	"github.com/zy84338719/lightcat/internal/store"
+	"github.com/zy84338719/lightcat/internal/trace"
 	"github.com/zy84338719/lightcat/internal/web"
 )
 
@@ -599,7 +600,9 @@ func newLogger(cfg *config.Config) *slog.Logger {
 	} else {
 		h = slog.NewTextHandler(os.Stdout, opts)
 	}
-	return slog.New(h)
+	// 包一层把 ctx 里的 trace_id 补成字段。用户可见的日志格式不变
+	//（只是末尾多一个 trace_id=…），换来的是「同一次请求触发的所有日志行可串联」。
+	return slog.New(trace.SlogHandler(h))
 }
 
 // randomHex16 生成 16 字节的随机十六进制串（ConnectionRequest 密码用）。

@@ -338,7 +338,10 @@ func init() {
 		"参数条数":  "Parameters",
 		"重试":    "Retries",
 		"来源 IP": "Source IP",
-		"暂无记录":  "No records yet",
+		"trace": "trace",
+		// 上报记录里的 trace_id 列：点一下复制整条日志链的检索键
+		"点击复制": "Click to copy",
+		"暂无记录": "No records yet",
 
 		// ---- 终端弹窗 ----
 		"关闭":      "Close",

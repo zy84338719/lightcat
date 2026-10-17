@@ -40,6 +40,10 @@ func NewHertzEngine(h http.Handler, ln net.Listener, tlsCfg *tls.Config) *server
 		opts = append(opts, server.WithTLS(tlsCfg))
 	}
 	e := server.New(opts...)
+	// trace_id 中间件必须在**任何路由注册之前**挂上：Hertz 的 RouterGroup.Use 是把
+	// 中间件追加进 group.Handlers，而 handle() 在**注册时**就把这条链快照下来 ——
+	// 晚于路由注册再 Use，对已注册的路由不生效。所以放在工厂里、早于兜底路由。
+	RegisterTraceMiddleware(e)
 	handler := adaptor.HertzHandler(h)
 	// 根路径与通配都挂：Hertz 的 "/" 只匹配根，"/*any" 兜其余全部路径
 	e.Any("/", handler)

@@ -76,7 +76,7 @@ const (
 // 所以看**任务历史**里我们上一次写它的结果 —— 成功且写的就是当前这套才算数；
 // 失败了隔一会儿重试（设备忙、临时拒绝都遇到过），重试到上限就停手并告警，
 // 不把任务历史刷满。
-func (s *Server) EnsureConnReqCredentials(deviceID int64) {
+func (s *Server) EnsureConnReqCredentials(ctx context.Context, deviceID int64) {
 	if !s.cfg.ConnReqEnabled || s.cfg.ConnReqUser == "" {
 		return
 	}
@@ -100,7 +100,7 @@ func (s *Server) EnsureConnReqCredentials(deviceID int64) {
 	curUser := lookupMgmt(params, pConnReqUser)
 	mismatch := curUser != "" && curUser != s.cfg.ConnReqUser
 	if mismatch {
-		s.log.Info("设备上的 ConnectionRequest 用户名与我们配置的不一致，重新下发",
+		s.log.InfoContext(ctx, "设备上的 ConnectionRequest 用户名与我们配置的不一致，重新下发",
 			"device_id", deviceID, "device_user", curUser, "want", s.cfg.ConnReqUser)
 	}
 
@@ -119,7 +119,7 @@ func (s *Server) EnsureConnReqCredentials(deviceID int64) {
 	case connReqRetryLater:
 		return
 	case connReqGivingUp:
-		s.log.Warn("写 ConnectionRequest 凭据连续失败，不再重试（该设备暂时无法被主动唤醒）",
+		s.log.WarnContext(ctx, "写 ConnectionRequest 凭据连续失败，不再重试（该设备暂时无法被主动唤醒）",
 			"device_id", deviceID, "attempts", attempts, "user", s.cfg.ConnReqUser)
 		return
 	}
@@ -133,14 +133,14 @@ func (s *Server) EnsureConnReqCredentials(deviceID int64) {
 		{Name: connReqParam(d.DataModelRoot, pConnReqPass), Value: s.cfg.ConnReqPass, Type: "string"},
 	}
 	if _, err := s.EnqueueSetParameters(deviceID, vals); err != nil {
-		s.log.Warn("下发 ConnectionRequest 凭据失败", "device_id", deviceID, "err", err)
+		s.log.WarnContext(ctx, "下发 ConnectionRequest 凭据失败", "device_id", deviceID, "err", err)
 		return
 	}
 	if attempts > 0 {
-		s.log.Info("重试写入 ConnectionRequest 凭据（上次失败）",
+		s.log.InfoContext(ctx, "重试写入 ConnectionRequest 凭据（上次失败）",
 			"device_id", deviceID, "attempt", attempts+1, "user", s.cfg.ConnReqUser)
 	} else {
-		s.log.Info("已入队：把 ConnectionRequest 凭据写进设备（设备不回读密码，所以得我们自己 provision）",
+		s.log.InfoContext(ctx, "已入队：把 ConnectionRequest 凭据写进设备（设备不回读密码，所以得我们自己 provision）",
 			"device_id", deviceID, "user", s.cfg.ConnReqUser)
 	}
 }
@@ -300,6 +300,6 @@ func (s *Server) WakeDeviceQuiet(deviceID int64) {
 
 // FetchWAN 给外部（Web/REST）用：采集 WAN 连接概况。
 func (s *Server) FetchWAN(deviceID int64) error {
-	_, err := s.EnqueueFetchWAN(deviceID)
+	_, err := s.EnqueueFetchWAN(context.Background(), deviceID)
 	return err
 }

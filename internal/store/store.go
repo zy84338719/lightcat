@@ -264,6 +264,13 @@ var migrations = []string{
 )`,
 	// 17：按标签聚合全量标签（概览页筛选 chips 的计数）。
 	`CREATE INDEX IF NOT EXISTS idx_device_tags_tag ON device_tags (tag)`,
+	// 18：Inform 的 trace_id —— 一次设备上报会打出十几条日志（纳管、逐条入队、
+	// 后续响应处理），它们靠同一个 trace_id 串起来；面板「上报记录」里直接把
+	// 这个值显示出来，用户报障时复制它就能在日志里捞出整条链。
+	//
+	// 为什么存库而不是只在日志里：日志会滚动，而「上报记录」是长期留痕的
+	// 面板页面；两者对不上时，以库里的这份为准去日志里查。
+	`ALTER TABLE informs ADD COLUMN trace_id TEXT NOT NULL DEFAULT ''`,
 }
 
 // migrate 把库升到当前版本。幂等：已升过的直接跳过。
