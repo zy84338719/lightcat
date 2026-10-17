@@ -107,6 +107,32 @@ scripts/dev-server.sh start|stop|restart|status|log
 
 - **Go**：`gofmt` 必须干净；注释写**为什么**这么做（尤其是踩过的坑），不要复述代码。
   一个包一个文件干一件事，纯逻辑抽成可单测的函数。
+- **错误链**：包装错误一律用 `github.com/oekit/pkg/errors` 的 `errors.Wrap(err, "上下文")`
+  （nil-safe、保留 `errors.Is/As` 链），不要新写 `fmt.Errorf("…: %w", err)`；
+  同一进程只允许这一套 errors 包装包（类型同一性，见 oekit 的 AGENTS.md）。
+- **goroutine**：禁止裸 `go func`，一律 `github.com/oekit/concurrency/async` 的
+  `GoSafe` 系列（panic 被 recover，不会把进程带走）；单轮可失败的后台循环，
+  把 GoSafe 包在单轮工作体上而不是整个循环。
+- **进程级后台任务一律走协程池**：巡检、离线探测、ontweb 轮询、webhook 推送这类
+  **要写库**的后台任务，从 `cmd/lightcat` 的 `newBackgroundPool()` 提交
+  （`cwmp.WithBackground` / `alert.WithBackground` 接线），不要用 `async.GoSafe` 裸奔。
+  关停契约（顺序不能反，改动时务必看清 `run()` 末尾）：
+
+  ```
+  ctx 取消  →  shutdownBackground(bg, log) 排空（上限 backgroundDrainTimeout = 5s）  →  st.Close()
+  ```
+
+  只 cancel 不排空就关库，后台写会撞上 `database is closed`，探测结果与 Inform 流水白丢。
+  `async.GoSafe` 仍然保留给**不碰库**的短任务（它只兜 panic，没有排空语义）。
+- **后台循环必须感知 ctx**：写 `for { select { case <-ctx.Done(): return; case <-t.C: … } }`，
+  不要写 `for range tick.C` —— 后者 SIGTERM 叫不醒它，是关停竞态的经典来源。
+- **并发上限要用真闸**：要限制并发就用 buffered channel 信号量（如离线探测的
+  `Server.probeGate`），**不要拿 `gopool.MaxIdleWorkers` 当并发上限** —— 它的语义是
+  「常驻 worker 上限，超出即用即走」，不是硬闸。
+- **日志**：统一 `log/slog` 的 kv 结构化风格（`log.Info("事件", "key", v)`），
+  与 oekit/logx 的 kv 规范同口径；不引入 printf 风格日志。
+  `*slog.Logger` 字段要么保证非 nil（如 `web.Register` 已兜底 `slog.Default()`），
+  要么每次调用前判空 —— 两者都没有就是一颗只走特定路径才触发的 nil 解引用。
 - **前端**：模板 + 一点原生 JS（`internal/web/static/app.js`），不引入框架与构建步骤。
 - **测试**：
   - 纯函数、模板渲染、存储层尽量写单测（`go test ./...`）；

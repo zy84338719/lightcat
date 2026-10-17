@@ -85,3 +85,51 @@ scripts/loadtest.sh -E "ACS_DB_MAX_CONNS=4"   # 透传 ACS 环境变量（调优
   人不用管。
 - 几百台同时恢复时，关注的是「多久全部上来」而不是报错：实测 400 台约 2 分钟数据全量入库，
   只不过部分设备的单次会话会超时、留到下一次周期补完。想更快就得改写入路径（见上）。
+
+## 面板静态资源：Hertz 原生路由 vs 兜底（issue #9）
+
+`/static/`（style.css + app.js）是面板每次开页必取的热路径，以前整棵 `http.ServeMux`
+经 `adaptor.HertzHandler` 挂在 Hertz 的 `/*any` 兜底上，每个请求都多走一跳
+`net/http.Request ⇄ hertz.RequestContext` 转换。
+
+### 先纠一个前提：`adaptor.StaticFSHandler` 并不绕开 adaptor
+
+issue 里建议的一行是 `adaptor.StaticFSHandler("/static", assets)`。看 v0.5.2 的实现，
+它最后一行是 `adaptor.HertzHandler(http.StripPrefix(...))` —— **转换照走**，
+只是省掉了 mux 的路由匹配。另外它不带 `Cache-Control`，
+会把「改完 app.js 刷新就用上」这条行为悄悄弄丢。
+
+### 测法
+
+服务器与压测客户端**分成两个进程**（否则客户端开销会混进 CPU）：
+
+- 服务器 = `internal/web` 的 `go test -c` 二进制，起一台「`/*any` 兜底 + 静态路由」的同构引擎；
+- 客户端 = 独立 Go 程序，闭环压 `GET /static/style.css`，32 并发；
+- CPU 取服务器进程的累计 CPU 时间（`ps -o time=`），**每请求 CPU = 累计 CPU / 请求数**；
+- 三种变体各跑 15–20 秒，并且**倒序再跑一轮**（baseline 先跑会吃到热缓存优势）。
+
+### 结果（每请求服务端 CPU）
+
+| 变体 | 第 1 轮（正序） | 第 2 轮（倒序） | 均值 |
+|---|---|---|---|
+| 现状：mux 兜底（adaptor + FileServer） | 41.58 µs | 43.61 µs | **42.60 µs** |
+| `adaptor.StaticFSHandler`（issue 的写法） | 42.42 µs | 41.65 µs | **42.04 µs** |
+| Hertz 原生 handler（本次采用） | 40.26 µs | 37.02 µs | **38.64 µs** |
+
+`StaticFSHandler` 与现状**基本持平**（印证它没绕开 adaptor）；原生 handler 省约 **9%** 每请求 CPU。
+
+### 为什么 QPS 数字不要看
+
+QPS 在这三种变体间抖动比收益还大（同一次配置 baseline 就能跑出 70k–94k），
+因为 35 KB 的响应体传输占了绝大部分时间，机器是**带宽饱和**而非 CPU 饱和。
+真正干净、且与机制对得上的指标是**每请求服务端 CPU**：它只随服务端做的事变。
+这也意味着端到端 p99 在真实面板流量（几个人访问）下基本看不出差别 ——
+这个改动的价值是实打实的 CPU 节省，不是延迟。
+
+### 行为差异（有意为之，都钉在 `static_test.go` 里）
+
+- 404 不带 `Cache-Control`（与改前一致：`net/http` 的 `serveError` 会摘掉缓存头）；
+- 不再发 `Accept-Ranges`（没有实现 Range，就不宣称；CSS/JS 本来也不会 Range 请求）；
+- `GET /static/`（目录本身）改回 404，不再返回文件列表；
+- 面板 mux 里**不再**留静态资源兜底 —— 否则「原生路由没注册」会被悄悄掩盖，
+  `TestStaticReverse_FallsBackToCatchAll` 就失去意义。

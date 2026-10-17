@@ -233,6 +233,7 @@ uppercased, hyphens replaced with underscores).
 | `-offline-probe-grace` | `ACS_OFFLINE_PROBE_GRACE` | `30s` | How long to wait after the last probe before marking offline |
 | `-offline-probe-max` | `ACS_OFFLINE_PROBE_MAX` | `0` | Upper bound for `interval × factor` (`0` = none; useful when a device reports a very large interval) |
 | `-offline-check-interval` | `ACS_OFFLINE_CHECK_INTERVAL` | `30s` | How often the background checker sweeps online status |
+| `-probe-concurrency` | `ACS_PROBE_CONCURRENCY` | `20` | Max **concurrent** offline probes (Connection Request in flight); keeps connection count sane when many devices drop at once |
 | `-auto-fetch-wifi` | `ACS_AUTO_FETCH_WIFI` | `true` | Automatically collect wireless overview and host list on onboarding |
 | `-auto-refresh-wifi` | `ACS_AUTO_REFRESH_WIFI` | `10m` | Auto-refresh interval for the wireless / client overview (the "collected at" time on the panel moves accordingly; `0` = collect only once at onboarding) |
 | `-probe-capabilities` | `ACS_PROBE_CAPABILITIES` | `true` | Run capability probing once on onboarding (decides UI blocks) |
@@ -327,6 +328,25 @@ open otherwise.
   the ten metrics `/metrics` exposes — the dashboard never references a metric that does not exist.
   Re-download after changing the token. The target defaults to `127.0.0.1:<panel port>`; if Prometheus
   runs on another host, bind the panel to an address Prometheus can reach.
+
+### Probe endpoints (no auth required)
+
+All three are served on **both the ACS port and the panel port**, so a dual-port deployment does not
+force you to guess which one to probe:
+
+| Endpoint | Use | Behaviour |
+| --- | --- | --- |
+| `/pingz` | **Liveness** probe | Answers `pong` only; **touches no dependency** |
+| `/healthz` | **Readiness** probe | Actually pings SQLite; returns non-200 when the DB is not writable |
+| `/buildVersion` | Build info | Build version and uptime; the single most useful line to paste in a bug report |
+
+When wiring container/Kubernetes probes, keep the split: **use `/pingz`, not `/healthz`, for
+liveness**. A briefly unavailable database is a reason to shed traffic, not to restart the process —
+pointing liveness at `/healthz` drops you into a restart loop that never converges.
+
+`deploy/k8s/statefulset.yaml` and the `Dockerfile` already follow this. Both previously probed the
+panel homepage (`GET /`) and relied on the coincidence that an unauthenticated request returns a
+303 to the login page.
 
 ### Inventory page (/inventory)
 
