@@ -1,9 +1,10 @@
 package store
 
 import (
-	"fmt"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/oekit/pkg/errors"
 )
 
 // 设备标签：运维分组（按位置 / 用途 / 批次），概览页可按标签筛选。
@@ -57,21 +58,21 @@ func NormalizeTags(raw string) []string {
 func (s *Store) SetDeviceTags(deviceID int64, tags []string) error {
 	tx, err := s.db.Begin()
 	if err != nil {
-		return fmt.Errorf("开事务失败: %w", err)
+		return errors.Wrap(err, "开事务失败")
 	}
 	defer tx.Rollback()
 
 	if _, err := tx.Exec(`DELETE FROM device_tags WHERE device_id = ?`, deviceID); err != nil {
-		return fmt.Errorf("清旧标签失败: %w", err)
+		return errors.Wrap(err, "清旧标签失败")
 	}
 	for _, t := range tags {
 		if _, err := tx.Exec(
 			`INSERT OR IGNORE INTO device_tags (device_id, tag) VALUES (?, ?)`, deviceID, t); err != nil {
-			return fmt.Errorf("写标签失败: %w", err)
+			return errors.Wrap(err, "写标签失败")
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("提交标签失败: %w", err)
+		return errors.Wrap(err, "提交标签失败")
 	}
 	return nil
 }
@@ -80,7 +81,7 @@ func (s *Store) SetDeviceTags(deviceID int64, tags []string) error {
 func (s *Store) DeviceTags(deviceID int64) ([]string, error) {
 	rows, err := s.db.Query(`SELECT tag FROM device_tags WHERE device_id = ? ORDER BY tag`, deviceID)
 	if err != nil {
-		return nil, fmt.Errorf("读标签失败: %w", err)
+		return nil, errors.Wrap(err, "读标签失败")
 	}
 	defer rows.Close()
 	out := []string{}
@@ -99,7 +100,7 @@ func (s *Store) DeviceTags(deviceID int64) ([]string, error) {
 func (s *Store) TagsByDevice() (map[int64][]string, error) {
 	rows, err := s.db.Query(`SELECT device_id, tag FROM device_tags ORDER BY device_id, tag`)
 	if err != nil {
-		return nil, fmt.Errorf("读标签失败: %w", err)
+		return nil, errors.Wrap(err, "读标签失败")
 	}
 	defer rows.Close()
 	out := map[int64][]string{}
@@ -118,7 +119,7 @@ func (s *Store) TagsByDevice() (map[int64][]string, error) {
 func (s *Store) AllTags() ([]TagCount, error) {
 	rows, err := s.db.Query(`SELECT tag, COUNT(*) FROM device_tags GROUP BY tag ORDER BY COUNT(*) DESC, tag`)
 	if err != nil {
-		return nil, fmt.Errorf("读标签统计失败: %w", err)
+		return nil, errors.Wrap(err, "读标签统计失败")
 	}
 	defer rows.Close()
 	var out []TagCount
@@ -136,7 +137,7 @@ func (s *Store) AllTags() ([]TagCount, error) {
 func (s *Store) DevicesWithTag(tag string) (map[int64]bool, error) {
 	rows, err := s.db.Query(`SELECT device_id FROM device_tags WHERE tag = ?`, tag)
 	if err != nil {
-		return nil, fmt.Errorf("按标签读设备失败: %w", err)
+		return nil, errors.Wrap(err, "按标签读设备失败")
 	}
 	defer rows.Close()
 	out := map[int64]bool{}

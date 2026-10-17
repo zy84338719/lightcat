@@ -1,6 +1,7 @@
 package cwmp
 
 import (
+	"context"
 	"crypto/md5"
 	"crypto/rand"
 	"encoding/base64"
@@ -11,6 +12,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/oekit/pkg/errors"
 )
 
 // SendConnectionRequest 主动唤醒一台 CPE（TR-069 Annex A 的 Connection Request）。
@@ -27,9 +30,18 @@ import (
 // 账号密码由**我们自己 provision**（写 ManagementServer.ConnectionRequestUsername/Password）：
 // 真机不回读这两个参数，但它们是可写的。
 func SendConnectionRequest(rawURL, username, password string, timeout time.Duration) error {
+	return SendConnectionRequestCtx(context.Background(), rawURL, username, password, timeout)
+}
+
+// SendConnectionRequestCtx 是 SendConnectionRequest 的可取消版本。
+//
+// 为什么需要 ctx：离线巡检一批设备同时探测时，进程可能正好收到 SIGTERM。
+// 没有 ctx 时，已发出的探测只能干等满 ConnReqTimeout（默认 10 秒），
+// 关停窗口被最慢的那台设备绑架（OEK-2/3 的前置：关停要有上界）。
+func SendConnectionRequestCtx(ctx context.Context, rawURL, username, password string, timeout time.Duration) error {
 	u, err := url.Parse(strings.TrimSpace(rawURL))
 	if err != nil {
-		return fmt.Errorf("ConnectionRequestURL 不是合法 URL: %w", err)
+		return errors.Wrap(err, "ConnectionRequestURL 不是合法 URL")
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return fmt.Errorf("不支持的协议 %q（只允许 http/https）", u.Scheme)
@@ -47,7 +59,7 @@ func SendConnectionRequest(rawURL, username, password string, timeout time.Durat
 	}
 
 	do := func(auth string) (*http.Response, error) {
-		req, err := http.NewRequest(http.MethodGet, u.String(), nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 		if err != nil {
 			return nil, err
 		}
@@ -61,7 +73,12 @@ func SendConnectionRequest(rawURL, username, password string, timeout time.Durat
 
 	resp, err := do("")
 	if err != nil {
-		return fmt.Errorf("连接设备失败: %w", err)
+		// 取消要原样透出（errors.Is(err, context.Canceled) 得成立）：
+		// 关停期的探测中断不是设备故障，调用方靠这个把它和真失败分开。
+		if ctx.Err() != nil {
+			return errors.Wrap(err, "探测已取消")
+		}
+		return errors.Wrap(err, "连接设备失败")
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
@@ -87,7 +104,10 @@ func SendConnectionRequest(rawURL, username, password string, timeout time.Durat
 	}
 	resp2, err := do(auth)
 	if err != nil {
-		return fmt.Errorf("带认证重试失败: %w", err)
+		if ctx.Err() != nil {
+			return errors.Wrap(err, "探测已取消")
+		}
+		return errors.Wrap(err, "带认证重试失败")
 	}
 	defer resp2.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp2.Body, 4096))

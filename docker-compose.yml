@@ -36,7 +36,8 @@ services:
       # ACS 自身对外 URL：固件远程升级时下发给光猫的文件地址基于它，
       # 必须填**光猫能访问到**的地址（例：http://192.168.1.10:7547）
       ACS_URL: ${LIGHTCAT_ACS_URL:-}
-      # 健康检查走面板端口：CWMP 专用端口对 GET 一律 405（协议只收 POST），不能探活
+      # 健康检查端口：/healthz 在 ACS 与面板两个端口都有（7547 与 8080 都行），
+      # 显式写 8080 只是把意图写清楚；单端口部署删掉这行也能用默认值。
       LIGHTCAT_HEALTH_PORT: "8080"
     volumes:
       - ./data:/data

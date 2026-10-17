@@ -23,6 +23,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/oekit/concurrency/async"
+	"github.com/oekit/concurrency/gopool"
+
 	"github.com/zy84338719/lightcat/internal/store"
 )
 
@@ -54,7 +57,14 @@ type Manager struct {
 
 	webhook string       // 空 = 只记录不推送
 	hc      *http.Client // 推送专用：短超时，不跟随重定向（推送目标不该拐弯）
+
+	// bg 提交 webhook 推送任务。接了进程级池就能在关库前排空（OEK-2）；
+	// nil 时退回 async.GoSafe。
+	bg *gopool.Pool
 }
+
+// WithBackground 让 webhook 推送走进程级协程池，便于关停前排空。
+func WithBackground(m *Manager, bg *gopool.Pool) { m.bg = bg }
 
 // New 构造 Manager。webhookURL 非空时必须是 http/https 且带主机名，
 // 否则返回错误 —— 配置错误在启动时就炸，不留到第一次告警才发现。
@@ -147,7 +157,12 @@ func (m *Manager) raise(deviceID int64, kind, message string, value, threshold f
 	}
 	m.log.Warn("告警", "device_id", deviceID, "kind", kind, "message", message)
 	if m.webhook != "" {
-		go m.notify(*a)
+		notify := func() { m.notify(*a) }
+		if m.bg != nil {
+			m.bg.Go(notify)
+		} else {
+			async.GoSafe(notify)
+		}
 	}
 }
 

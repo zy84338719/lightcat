@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/oekit/pkg/errors"
 )
 
 // PresetValue 是一个要写进设备的参数（SetParameterValues 动作的一项）。
@@ -119,7 +121,7 @@ func (s *Store) CreatePreset(p *Preset) (int64, error) {
 		p.CondParam, p.CondOp, p.CondValue, marshalActions(p.Actions),
 		boolInt(p.OncePerDevice), p.Weight, now, now)
 	if err != nil {
-		return 0, fmt.Errorf("新建预设失败: %w", err)
+		return 0, errors.Wrap(err, "新建预设失败")
 	}
 	p.CreatedAt, p.UpdatedAt = time.Now(), time.Now()
 	return res.LastInsertId()
@@ -140,7 +142,7 @@ func (s *Store) UpdatePreset(p *Preset) error {
 		p.CondParam, p.CondOp, p.CondValue, marshalActions(p.Actions),
 		boolInt(p.OncePerDevice), p.Weight, ts(time.Now()), p.ID)
 	if err != nil {
-		return fmt.Errorf("更新预设失败: %w", err)
+		return errors.Wrap(err, "更新预设失败")
 	}
 	_, _ = s.db.Exec(`DELETE FROM preset_fires WHERE preset_id = ?`, p.ID)
 	return nil

@@ -16,7 +16,7 @@
 package restart
 
 import (
-	"errors"
+	stderrors "errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -27,6 +27,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/oekit/pkg/errors"
 )
 
 // IsSystemd 判断当前进程是不是由 systemd 拉起的。
@@ -67,7 +69,7 @@ func Precheck(addrs []string, held map[string]bool) error {
 		}
 		ln, err := net.Listen("tcp", a)
 		if err != nil {
-			return fmt.Errorf("%s 用不了：%w", a, FriendlyListenErr(err))
+			return errors.Wrap(FriendlyListenErr(err), a+" 用不了")
 		}
 		_ = ln.Close()
 	}
@@ -77,15 +79,15 @@ func Precheck(addrs []string, held map[string]bool) error {
 // FriendlyListenErr 把 bind 错误说成人话（界面上要显示给用户看）。
 func FriendlyListenErr(err error) error {
 	var opErr *net.OpError
-	if errors.As(err, &opErr) {
-		if errors.Is(opErr.Err, syscall.EADDRINUSE) {
-			return errors.New("端口被别的程序占用了")
+	if stderrors.As(err, &opErr) {
+		if stderrors.Is(opErr.Err, syscall.EADDRINUSE) {
+			return stderrors.New("端口被别的程序占用了")
 		}
-		if errors.Is(opErr.Err, syscall.EADDRNOTAVAIL) {
-			return errors.New("本机没有这个地址")
+		if stderrors.Is(opErr.Err, syscall.EADDRNOTAVAIL) {
+			return stderrors.New("本机没有这个地址")
 		}
-		if errors.Is(opErr.Err, syscall.EACCES) {
-			return errors.New("没有权限绑这个端口")
+		if stderrors.Is(opErr.Err, syscall.EACCES) {
+			return stderrors.New("没有权限绑这个端口")
 		}
 	}
 	return err
@@ -134,7 +136,7 @@ func WaitHTTP(addr string, timeout time.Duration, childAlive func() bool) error 
 		time.Sleep(150 * time.Millisecond)
 	}
 	if lastErr == nil {
-		lastErr = errors.New("超时")
+		lastErr = stderrors.New("超时")
 	}
 	return fmt.Errorf("新地址 %s 一直没起来（%v）", addr, lastErr)
 }
@@ -150,7 +152,7 @@ func WaitHTTP(addr string, timeout time.Duration, childAlive func() bool) error 
 func Spawn(files []*os.File, extraEnv map[string]string) (*exec.Cmd, error) {
 	exe, err := os.Executable()
 	if err != nil {
-		return nil, fmt.Errorf("找不到自己的可执行文件：%w", err)
+		return nil, errors.Wrap(err, "找不到自己的可执行文件")
 	}
 	cmd := exec.Command(exe, os.Args[1:]...)
 	cmd.Env = withEnv(os.Environ(), extraEnv)
@@ -160,7 +162,7 @@ func Spawn(files []*os.File, extraEnv map[string]string) (*exec.Cmd, error) {
 	cmd.ExtraFiles = files
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("起新进程失败：%w", err)
+		return nil, errors.Wrap(err, "起新进程失败")
 	}
 	return cmd, nil
 }
@@ -209,7 +211,7 @@ func Adopt(fd int) (net.Listener, error) {
 	ln, err := net.FileListener(f)
 	_ = f.Close() // FileListener 已经 dup 了一份，这份可以关了
 	if err != nil {
-		return nil, fmt.Errorf("句柄 %d 不是监听套接字：%w", fd, err)
+		return nil, errors.Wrap(err, fmt.Sprintf("句柄 %d 不是监听套接字", fd))
 	}
 	return ln, nil
 }

@@ -51,10 +51,14 @@ type Config struct {
 	OfflineProbeGrace    time.Duration // 最后一次探测后再等多久才判离线
 	OfflineProbeMax      time.Duration // 周期×倍数 的上限（0 = 不设）
 	OfflineCheckInterval time.Duration // 后台多久巡检一次
-	MaxBodyBytes         int64
-	LogRawSOAP           bool
-	AutoFetchInfo        bool
-	AutoFetchWiFi        bool
+	// ProbeConcurrency 是离线探测同时在飞的 ConnectionRequest 上限，默认 20。
+	// 一批设备同时掉线时每台都要等满 ConnReqTimeout，不设上限就是
+	// N 台 = N 个并发连接（见 internal/cwmp/offline.go 的闸说明）。
+	ProbeConcurrency int
+	MaxBodyBytes     int64
+	LogRawSOAP       bool
+	AutoFetchInfo    bool
+	AutoFetchWiFi    bool
 	// AutoRefreshWiFi 是无线/终端概况的自动刷新间隔。
 	// 面板上那个「采集」时间只有真的去读一次设备参数才会动，所以除了首次纳管，
 	// 再按这个间隔自动来一次。0 = 只在首次纳管 / BOOTSTRAP 时采一次。
@@ -137,6 +141,7 @@ func Load(args []string) (*Config, error) {
 		OfflineProbeGrace:    30 * time.Second,
 		OfflineProbeMax:      0,
 		OfflineCheckInterval: 30 * time.Second,
+		ProbeConcurrency:     20,
 		MaxBodyBytes:         4 << 20,
 		MaxParamsPerRequest:  200,
 		TaskHistoryLimit:     500,
@@ -188,6 +193,8 @@ func Load(args []string) (*Config, error) {
 		"周期×倍数 的上限（0=不设；设备上报的周期很大时用得上）")
 	fs.DurationVar(&c.OfflineCheckInterval, "offline-check-interval", c.OfflineCheckInterval,
 		"后台多久巡检一次在线状态")
+	fs.IntVar(&c.ProbeConcurrency, "probe-concurrency", c.ProbeConcurrency,
+		"离线探测同时在飞的 ConnectionRequest 上限（默认 20）")
 	fs.Int64Var(&c.MaxBodyBytes, "max-body", c.MaxBodyBytes, "单请求体上限（字节）")
 	fs.BoolVar(&c.LogRawSOAP, "log-soap", c.LogRawSOAP, "是否记录原始 SOAP 报文")
 	fs.BoolVar(&c.AutoFetchInfo, "auto-fetch-info", c.AutoFetchInfo, "Inform 后自动取设备基本信息")
@@ -247,6 +254,9 @@ func Load(args []string) (*Config, error) {
 	}
 	if c.OfflineCheckInterval <= 0 {
 		c.OfflineCheckInterval = 30 * time.Second
+	}
+	if c.ProbeConcurrency <= 0 {
+		c.ProbeConcurrency = 20
 	}
 	c.Path = normalizePath(c.Path)
 	if c.Listen == "" {
@@ -360,6 +370,11 @@ func fromEnv(c *Config) {
 	if v := os.Getenv("ACS_OFFLINE_CHECK_INTERVAL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
 			c.OfflineCheckInterval = d
+		}
+	}
+	if v := os.Getenv("ACS_PROBE_CONCURRENCY"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			c.ProbeConcurrency = n
 		}
 	}
 	if v := os.Getenv("ACS_MAX_PARAMS_PER_REQUEST"); v != "" {

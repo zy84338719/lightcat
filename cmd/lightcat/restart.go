@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/oekit/concurrency/async"
+
 	"github.com/zy84338719/lightcat/internal/restart"
 	"github.com/zy84338719/lightcat/internal/store"
 	"github.com/zy84338719/lightcat/internal/web"
@@ -75,10 +77,10 @@ func restartService(st *store.Store, log *slog.Logger, oldACS, oldWeb string, li
 			log.Info("面板改了监听地址，退出进程交给 systemd 拉起",
 				"new_listen", newACS, "new_panel_listen", panel)
 			// 先把响应发回浏览器，再退出（否则用户看到的是连接被重置）
-			go func() {
+			async.GoSafe(func() {
 				time.Sleep(1200 * time.Millisecond)
 				stop()
-			}()
+			})
 			return web.RestartSystemd, nil
 		}
 
@@ -124,10 +126,10 @@ func restartService(st *store.Store, log *slog.Logger, oldACS, oldWeb string, li
 		}
 		// 收尸：不 Wait 的话，退出的子进程会变成僵尸，signal 0 也还探得到「活着」
 		done := make(chan struct{})
-		go func() {
+		async.GoSafe(func() {
 			_ = child.Wait()
 			close(done)
-		}()
+		})
 		alive := func() bool {
 			select {
 			case <-done:
@@ -160,10 +162,10 @@ func restartService(st *store.Store, log *slog.Logger, oldACS, oldWeb string, li
 
 		log.Info("面板改了监听地址，已起新进程接管",
 			"new_pid", child.Process.Pid, "new_listen", newACS, "new_panel_listen", panel)
-		go func() {
+		async.GoSafe(func() {
 			time.Sleep(1200 * time.Millisecond)
 			stop() // 优雅退出：新进程已经确认在跑了
-		}()
+		})
 		return web.RestartSelf, nil
 	}
 }

@@ -17,7 +17,6 @@ package ontweb
 import (
 	"bytes"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -30,6 +29,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/oekit/pkg/errors"
+	"github.com/oekit/pkg/jsonrepair"
 )
 
 // Client 是一台光猫的 Web 会话。
@@ -55,7 +57,7 @@ func New(base, user, pass string) (*Client, error) {
 	}
 	u, err := url.Parse(strings.TrimRight(base, "/"))
 	if err != nil {
-		return nil, fmt.Errorf("光猫地址不合法: %w", err)
+		return nil, errors.Wrap(err, "光猫地址不合法")
 	}
 	if u.Host == "" {
 		return nil, fmt.Errorf("光猫地址不合法: %s", base)
@@ -197,7 +199,7 @@ func (c *Client) Login() error {
 		// GetRandCount 的响应带 UTF-8 BOM，必须剥掉，否则 token 对不上。
 		raw, err := c.doPost(c.prof.TokenPath, "application/x-www-form-urlencoded", "")
 		if err != nil {
-			return fmt.Errorf("拿登录 token 失败: %w", err)
+			return errors.Wrap(err, "拿登录 token 失败")
 		}
 		token = strings.TrimSpace(strings.TrimPrefix(raw, "\ufeff"))
 		if token == "" {
@@ -213,7 +215,7 @@ func (c *Client) Login() error {
 	}
 	res, err := c.doPost(c.prof.LoginPath, "application/x-www-form-urlencoded", form.Encode())
 	if err != nil {
-		return fmt.Errorf("登录请求失败: %w", err)
+		return errors.Wrap(err, "登录请求失败")
 	}
 	// 成功标记按配方判（华为 V5R023：top.location.replace 跳转页；失败回登录页 + 错误文案）
 	for _, ok := range c.prof.LoginOK {
@@ -267,7 +269,7 @@ func parseDevicePage(page string) DeviceInfo { return defaultProfile.parseDevice
 func (c *Client) DeviceInfo() (DeviceInfo, error) {
 	page, err := c.doGet(c.prof.DevicePage)
 	if err != nil {
-		return DeviceInfo{}, fmt.Errorf("抓设备信息页失败: %w", err)
+		return DeviceInfo{}, errors.Wrap(err, "抓设备信息页失败")
 	}
 	d := c.prof.parseDevice(page)
 	if d.SN == "" && strings.TrimSpace(page) != "" {
@@ -302,7 +304,7 @@ func parseOpticPage(page string) Optic { return defaultProfile.parseOptic(page) 
 func (c *Client) Optic() (Optic, error) {
 	page, err := c.doGet(c.prof.OpticPage)
 	if err != nil {
-		return Optic{}, fmt.Errorf("抓光口信息页失败: %w", err)
+		return Optic{}, errors.Wrap(err, "抓光口信息页失败")
 	}
 	o := c.prof.parseOptic(page)
 	if o.empty() && strings.TrimSpace(page) != "" {
@@ -397,7 +399,7 @@ func parseWlanPage(page string) ([]WlanRow, error) { return defaultProfile.parse
 func (c *Client) WlanConfig() ([]WlanRow, error) {
 	page, err := c.doGet(c.prof.WlanPage)
 	if err != nil {
-		return nil, fmt.Errorf("抓无线配置页失败: %w", err)
+		return nil, errors.Wrap(err, "抓无线配置页失败")
 	}
 	rows, err := c.prof.parseWlan(page)
 	if err != nil {
@@ -424,7 +426,7 @@ func (c *Client) Hosts(which string) ([]Host, error) {
 	}
 	page, err := c.doGet(pagePath)
 	if err != nil {
-		return nil, fmt.Errorf("抓终端页失败: %w", err)
+		return nil, errors.Wrap(err, "抓终端页失败")
 	}
 	m := c.prof.tokenRe.FindStringSubmatch(page)
 	if m == nil {
@@ -437,15 +439,26 @@ func (c *Client) Hosts(which string) ([]Host, error) {
 	body := c.prof.HostsFields + "&x.X_HW_Token=" + m[1]
 	raw, err := c.doPost("/getajax.cgi?"+q, "application/x-www-form-urlencoded", body)
 	if err != nil {
-		return nil, fmt.Errorf("终端查询失败: %w", err)
+		return nil, errors.Wrap(err, "终端查询失败")
 	}
 	return parseHostsJSON(raw), nil
 }
 
 // parseHostsJSON 解析终端 AJAX 响应（\xNN 转义的 JSON 数组，纯函数，便于测试）。
+//
+// 用 jsonrepair.Unmarshal 而不是 json.Unmarshal：这是**真机抓取**，厂商固件
+// 返回什么我们控制不了。它能救回来的典型坏法是「包了一层」——markdown 代码围栏、
+// 前后带说明文字、数组尾部多一个逗号；以前整份直接丢弃（界面上就是「一个终端都没有」），
+// 现在拿到的终端照常显示。
+//
+// 边界要说清楚（实测过的，别当万能钥匙用）：
+//   - 合法的 JSON 走 stdlib 快路径，解析成本不变；
+//   - 截断的数组（只回来半截）**救不回来**，仍然返回 nil —— 宁可少显示，
+//     也不能把没解析全的东西当成完整结果报上去；
+//   - 纯垃圾（登录过期提示、HTML 错误页）照样报错，不会凭空造出空终端。
 func parseHostsJSON(raw string) []Host {
 	var rows []map[string]any
-	if err := json.Unmarshal([]byte(hexDecode(raw)), &rows); err != nil {
+	if err := jsonrepair.Unmarshal(hexDecode(raw), &rows); err != nil {
 		return nil
 	}
 	out := make([]Host, 0, len(rows))

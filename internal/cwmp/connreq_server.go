@@ -1,11 +1,13 @@
 package cwmp
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/oekit/pkg/errors"
 	"github.com/zy84338719/lightcat/internal/store"
 )
 
@@ -239,11 +241,11 @@ func decodeConnReqSet(payload string) (connReqSet, bool) {
 func (s *Server) WakeDevice(deviceID int64) (string, error) {
 	d, err := s.store.GetDevice(deviceID)
 	if err != nil {
-		return "", fmt.Errorf("读设备失败: %w", err)
+		return "", errors.Wrap(err, "读设备失败")
 	}
 	if err := s.connectionRequest(d); err != nil {
 		s.log.Warn("主动唤醒失败", "device_id", deviceID, "url", d.ConnRequestURL, "err", err)
-		return "", fmt.Errorf("唤醒失败：%w", err)
+		return "", errors.Wrap(err, "唤醒失败")
 	}
 	s.log.Info("主动唤醒成功（设备会立刻回连开一次会话）",
 		"device_id", deviceID, "serial", d.SerialNumber, "url", d.ConnRequestURL)
@@ -257,6 +259,12 @@ func (s *Server) WakeDevice(deviceID int64) (string, error) {
 // 调用方决定怎么记日志 —— 这里的同一个错误，在人工唤醒时是「唤醒失败」，
 // 在离线巡检里是「探测无响应」。
 func (s *Server) connectionRequest(d *store.Device) error {
+	return s.connectionRequestCtx(context.Background(), d)
+}
+
+// connectionRequestCtx 是可取消版本：关停时用 ctx 打断在飞的探测，
+// 不然最慢的那台设备会把整个优雅退出拖满一个 ConnReqTimeout。
+func (s *Server) connectionRequestCtx(ctx context.Context, d *store.Device) error {
 	if !s.cfg.ConnReqEnabled {
 		return fmt.Errorf("主动唤醒功能已关闭（用 -connection-request 打开）")
 	}
@@ -279,7 +287,7 @@ func (s *Server) connectionRequest(d *store.Device) error {
 		// 没配置就试试设备上已有的（说不定是别的 ACS 配的）
 		user, pass = lookupMgmt(params, pConnReqUser), lookupMgmt(params, pConnReqPass)
 	}
-	return SendConnectionRequest(target, user, pass, s.cfg.ConnReqTimeout)
+	return SendConnectionRequestCtx(ctx, target, user, pass, s.cfg.ConnReqTimeout)
 }
 
 // WakeDeviceQuiet 是给「顺手试一下唤醒」的场景用的：不关心结果，只记日志。

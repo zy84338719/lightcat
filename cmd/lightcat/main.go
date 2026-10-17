@@ -12,10 +12,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/oekit/concurrency/async"
+	"github.com/oekit/concurrency/gopool"
+	oekitversion "github.com/oekit/core/version"
+	"github.com/oekit/pkg/errors"
 
 	hertzserver "github.com/cloudwego/hertz/pkg/app/server"
 
@@ -29,6 +33,13 @@ import (
 	"github.com/zy84338719/lightcat/internal/store"
 	"github.com/zy84338719/lightcat/internal/web"
 )
+
+// backgroundDrainTimeout 是关停时等待后台协程收工的上限。
+//
+// 取 5 秒：Hertz 的优雅退出也是 5 秒，两者同量级，运维看到的最长停机窗口可预期。
+// 超过它就强行关库 —— 宁可丢最后几条探测结果，也不能让一个卡住的 webhook
+// 把整个进程吊着不退。
+const backgroundDrainTimeout = 5 * time.Second
 
 func main() {
 	// 子命令：`lightcat alias …` 管理「厂商私有参数 → 面板字段」的映射表（不进服务端主流程）。
@@ -60,10 +71,15 @@ func run(args []string) error {
 	}
 	log := newLogger(cfg)
 
+	// 全局生命周期 ctx：SIGINT / SIGTERM 一到就取消，所有后台循环据此收工。
+	// 建得早一点 —— ontweb 轮询、告警推送这些后台任务从启动那一刻起就得能感知。
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	// TLS 配了就早验：证书读不了在启动时炸清楚，别等第一个请求才发现
 	if cfg.TLSEnabled() {
 		if _, err := tls.LoadX509KeyPair(cfg.TLSCert, cfg.TLSKey); err != nil {
-			return fmt.Errorf("TLS 证书不可用（-tls-cert/-tls-key）: %w", err)
+			return errors.Wrap(err, "TLS 证书不可用（-tls-cert/-tls-key）")
 		}
 	}
 
@@ -72,6 +88,15 @@ func run(args []string) error {
 		return err
 	}
 	defer st.Close()
+
+	// 进程级后台协程池（OEK-2）：巡检循环、离线探测、ontweb 轮询、webhook 推送
+	// 都从这儿走，panic 由池兜住，关库前由 pool.Close 排空。
+	//
+	// 必须建在 alert / ontweb / cwmp 之前 —— 它们都要用它提交后台任务。
+	bg := newBackgroundPool()
+	// 兜底：任何一条提前 return 的错误路径都会走到这里。
+	// 正常路径在 run 末尾已经显式关过；gopool 的 Close 幂等，重复调用无害。
+	defer shutdownBackground(bg, log)
 
 	// 自动重启会换进程，pid 文件得由**新进程**自己写才准（见 writePidFile）
 	defer writePidFile()()
@@ -83,7 +108,7 @@ func run(args []string) error {
 	if cfg.ConnReqPass == "" {
 		v, created, err := st.GetOrCreateSetting("connreq_pass", func() string { return randomHex16() })
 		if err != nil {
-			return fmt.Errorf("生成 ConnectionRequest 密码失败: %w", err)
+			return errors.Wrap(err, "生成 ConnectionRequest 密码失败")
 		}
 		cfg.ConnReqPass = v
 		if created {
@@ -113,6 +138,7 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
+	alert.WithBackground(alertMgr, bg)
 
 	// ontweb 内建轮询（可选）：没有运营商超管时，服务端自己用光猫普通账号的
 	// Web 接口定时采集（internal/ontweb）。进程退出即停，无需单独的调度器。
@@ -121,46 +147,51 @@ func run(args []string) error {
 	if cfg.OntWebURL != "" && cfg.OntWebInterval > 0 {
 		cl, err := ontweb.New(cfg.OntWebURL, cfg.OntWebUser, cfg.OntWebPassword)
 		if err != nil {
-			return fmt.Errorf("ontweb 轮询初始化失败: %w", err)
+			return errors.Wrap(err, "ontweb 轮询初始化失败")
 		}
 		log.Info("ontweb 内建轮询已启用", "url", cfg.OntWebURL, "interval", cfg.OntWebInterval)
-		go func() {
+		// 轮询跑在后台协程池里（进程退出即排空，见 shutdownBackground）。
+		// 两层保护：
+		//   - 外层（池的任务）保住 tick 循环本身；
+		//   - 内层只包单轮采集 —— ontweb 是真机抓取，厂商网页改版/返回怪结构
+		//     都可能踩到 panic，单轮失败只跳过本轮，下一轮照常采。
+		// 循环按 ctx 退出：原来写的是 `for range tick.C`，SIGTERM 根本叫不醒它，
+		// 关库时它还在往 store 写（OEK-2）。
+		bg.Go(func() {
 			poll := func() {
-				// 轮询跑在后台协程里，任何一次 panic 都会把**整个服务**带走 ——
-				// 而 ontweb 是真机抓取，厂商网页改版/返回怪结构都可能踩到。
-				// 单次采集失败不该拖垮 ACS，所以这里兜住，记完日志继续下一轮。
-				defer func() {
-					if r := recover(); r != nil {
-						log.Error("ontweb 采集 panic，已跳过本轮（服务继续运行）",
-							"panic", r, "stack", string(debug.Stack()))
+				async.GoSafe(func() {
+					snap, err := cl.Snapshot()
+					if err != nil {
+						log.Warn("ontweb 采集失败", "err", err)
+						return
 					}
-				}()
-				snap, err := cl.Snapshot()
-				if err != nil {
-					log.Warn("ontweb 采集失败", "err", err)
-					return
-				}
-				// 软诊断如实报出来（某页解析不出、配方对不上…）—— 不静默失败
-				for _, w := range snap.Warnings {
-					log.Warn("ontweb 采集不完整", "detail", w)
-				}
-				if id, n, err := ontweb.ApplySnapshot(st, snap, cfg.OntWebURL); err != nil {
-					log.Warn("ontweb 入库失败", "err", err)
-				} else {
-					log.Info("ontweb 采集完成", "params", n, "profile", snap.Profile)
-					// Web 通道也参与阈值告警：用刚入库的那条光功率历史评估
-					if last, ok, err := st.LastOpticalSample(id); err == nil && ok {
-						alertMgr.CheckOptical(id, last)
+					// 软诊断如实报出来（某页解析不出、配方对不上…）—— 不静默失败
+					for _, w := range snap.Warnings {
+						log.Warn("ontweb 采集不完整", "detail", w)
 					}
-				}
+					if id, n, err := ontweb.ApplySnapshot(st, snap, cfg.OntWebURL); err != nil {
+						log.Warn("ontweb 入库失败", "err", err)
+					} else {
+						log.Info("ontweb 采集完成", "params", n, "profile", snap.Profile)
+						// Web 通道也参与阈值告警：用刚入库的那条光功率历史评估
+						if last, ok, err := st.LastOpticalSample(id); err == nil && ok {
+							alertMgr.CheckOptical(id, last)
+						}
+					}
+				})
 			}
 			poll()
 			tick := time.NewTicker(cfg.OntWebInterval)
 			defer tick.Stop()
-			for range tick.C {
-				poll()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-tick.C:
+					poll()
+				}
 			}
-		}()
+		})
 	}
 
 	if n, err := st.ResetRunningTasks(); err == nil && n > 0 {
@@ -190,8 +221,10 @@ func run(args []string) error {
 		OfflineProbeGrace:    cfg.OfflineProbeGrace,
 		OfflineProbeMax:      cfg.OfflineProbeMax,
 		OfflineCheckInterval: cfg.OfflineCheckInterval,
+		ProbeConcurrency:     cfg.ProbeConcurrency,
 		MaxParamsPerRequest:  cfg.MaxParamsPerRequest,
 	}, log)
+	cwmp.WithBackground(srv, bg)
 
 	// TR-069 采集回执入库后，把认出来的光模块读数记进趋势历史并评估告警阈值。
 	// 辨认与面板展示同一套口径（映射表 + 兜底启发式），图和表不会各说各话。
@@ -235,12 +268,10 @@ func run(args []string) error {
 		return randomHex16() + randomHex16()
 	})
 	if err != nil {
-		return fmt.Errorf("准备面板登录密钥失败: %w", err)
+		return errors.Wrap(err, "准备面板登录密钥失败")
 	}
 	secret, _ := hex.DecodeString(secretHex)
 	creds := web.NewCreds(authUser, authHash, secret)
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	// 监听句柄在这里就建出来（而不是丢给 ListenAndServe 以后再说）：
 	// 面板上「立即重启服务」要把这些 socket **交给新进程**——老进程还攥着没变的
@@ -258,14 +289,14 @@ func run(args []string) error {
 	}
 	acsLn, err := lnFor(acsAddr)
 	if err != nil {
-		return fmt.Errorf("监听 %s 失败: %w", acsAddr, err)
+		return errors.Wrap(err, "监听 "+acsAddr+" 失败")
 	}
 	defer acsLn.Close()
 	var panelLn net.Listener
 	if webAddr != "" && webAddr != acsAddr {
 		panelLn, err = lnFor(webAddr)
 		if err != nil {
-			return fmt.Errorf("面板监听 %s 失败: %w", webAddr, err)
+			return errors.Wrap(err, "面板监听 "+webAddr+" 失败")
 		}
 		defer panelLn.Close()
 	}
@@ -334,11 +365,15 @@ func run(args []string) error {
 	if cfg.TLSEnabled() {
 		tlsCfg, err = web.TLSCfgFromFiles(cfg.TLSCert, cfg.TLSKey)
 		if err != nil {
-			return fmt.Errorf("构造 TLS 配置失败: %w", err)
+			return errors.Wrap(err, "构造 TLS 配置失败")
 		}
 	}
 
 	var acsEngine, panelEngine *hertzserver.Hertz
+	// panelHertz 是**挂着面板的那台引擎**：单端口时就是 ACS 引擎（面板与 CWMP 共用），
+	// 双端口时是面板引擎。/static/ 与 /api 都只挂这一台 —— 双端口时 ACS 端口只跑
+	// CWMP 协议，本来就没有面板静态资源，不必顺手扩大它的服务面。
+	var panelHertz *hertzserver.Hertz
 	if panelLn == nil {
 		// 默认：一个端口既接设备上报、又开面板（一套路由两用）
 		mux := cwmpMux(false)
@@ -347,6 +382,7 @@ func run(args []string) error {
 			return err
 		}
 		acsEngine = web.NewHertzEngine(requestLogger(log, mux), acsLn, tlsCfg)
+		panelHertz = acsEngine
 		// hz 生成的 /api 路由原生挂上 Hertz（比 adaptor 兜底更具体，优先命中）；
 		// mux 里的老 /api 路由在生产被影子覆盖，只留给单元测试直接打
 		apibiz.SetDeps(srvWeb)
@@ -359,12 +395,30 @@ func run(args []string) error {
 		}
 		acsEngine = web.NewHertzEngine(requestLogger(log, cwmpMux(true)), acsLn, tlsCfg)
 		panelEngine = web.NewHertzEngine(requestLogger(log, panelMux), panelLn, tlsCfg)
+		panelHertz = panelEngine
 		// 双端口：/api 只挂面板侧（与 net/http 时代的 Register 口径一致）
 		apibiz.SetDeps(srvWeb)
 		bizrouter.GeneratedRegister(panelEngine)
 	}
 
-	go func() {
+	// 面板静态资源（/static/）走 Hertz 原生路由，压过 "/*any" 兜底，
+	// 省掉每个 CSS/JS 请求的 adaptor 转换跳。口径与 /api 一致：只挂面板侧。
+	web.RegisterStaticRoutes(panelHertz)
+
+	syncOekitVersion()
+
+	// 存活/就绪/版本三个探针端点（/pingz、/healthz、/buildVersion）。
+	// **两个引擎都挂**：单端口时只有一个，双端口时 ACS 端口与面板端口各一份。
+	// 两个都挂是为了让探针配置不必猜端口 —— 之前 Dockerfile 的 HEALTHCHECK
+	// 只能探面板端口，一到双端口部署就必须手工设 LIGHTCAT_HEALTH_PORT，
+	// 否则 GET 打在 CWMP 端口上是 405，容器永远 unhealthy。
+	// 静态路径优先于 NewHertzEngine 的 "/*any" 兜底，不会被面板 mux 截走。
+	// 不需要鉴权 —— k8s 探针不带 cookie，也不该需要。
+	for _, e := range dedupEngines(panelEngine, acsEngine) {
+		web.RegisterHealthRoutes(e, st)
+	}
+
+	async.GoSafe(func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -372,7 +426,7 @@ func run(args []string) error {
 			_ = panelEngine.Shutdown(shutdownCtx)
 		}
 		_ = acsEngine.Shutdown(shutdownCtx)
-	}()
+	})
 
 	scheme := "http://"
 	if cfg.TLSEnabled() {
@@ -397,20 +451,76 @@ func run(args []string) error {
 	if panelEngine != nil {
 		log.Info("面板单独监听一个端口", "panel_listen", webAddr)
 		log.Info("ACS 端口独享：设备向任何路径提交都会受理", "listen", acsAddr)
-		go func() {
+		async.GoSafe(func() {
 			if err := panelEngine.Run(); err != nil {
 				// 面板端口起不来要让人看见（多半是端口被占或被面板设置写错了）
 				log.Error("面板监听失败", "addr", webAddr, "err", err)
 				stop()
 			}
-		}()
+		})
 	}
 
 	if err := acsEngine.Run(); err != nil {
+		shutdownBackground(bg, log)
 		return err
 	}
+	// 正常退出路径：引擎已停，接下来排空后台协程。defer 里还会再调一次
+	// shutdownBackground，但 gopool.Close 幂等，所以只是多一句日志。
+	shutdownBackground(bg, log)
 	log.Info("ACS 已退出")
 	return nil
+}
+
+// newBackgroundPool 建进程级后台协程池。
+//
+// 参数取值：常驻 64 个 worker 足够铺满巡检/探测/webhook 的常态并发；
+// 队列 256 是突发缓冲。超出队列的任务 gopool 会退化成一次性 goroutine 直跑，
+// 所以这里不会"悄悄丢任务"。
+func newBackgroundPool() *gopool.Pool {
+	return gopool.NewPool("lightcat-bg", gopool.PoolOption{
+		MaxIdleWorkers: 64,
+		WorkerMaxAge:   time.Minute,
+		TaskChanBuffer: 256,
+	})
+}
+
+// shutdownBackground 排空后台协程。**必须在 store.Close 之前调用。**
+//
+// 关停顺序是 OEK-2 的核心：巡检循环、离线探测、ontweb 轮询都要写库，
+// 不先等它们收工就关库，这些写在关停窗口里会撞上 "database is closed"，
+// 结果就是探测结果与 Inform 流水白丢（日志里只剩一堆无意义的写库错误）。
+//
+// 幂等：gopool.Close 可重复调用，所以既能在这里显式调，也能留给 defer 兜底。
+func shutdownBackground(bg *gopool.Pool, log *slog.Logger) {
+	if bg == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), backgroundDrainTimeout)
+	defer cancel()
+	started := time.Now()
+	if err := bg.Close(ctx); err != nil {
+		log.Warn("后台协程未在超时内排空（关库后可能仍有任务在写）",
+			"timeout", backgroundDrainTimeout, "err", err)
+		return
+	}
+	log.Info("后台协程已排空", "workers", bg.CurrentWorkers(), "took", time.Since(started).Round(time.Millisecond))
+}
+
+// syncOekitVersion 把面板展示的版本号同步给 oekit/core/version。
+//
+// /buildVersion 端点读的是后者（包级变量，默认 "dev"）。不对齐的话，用户
+// 报障时贴出来的是 "dev"，等于没有版本信息 —— 运维与用户看到的必须是同一个号。
+func syncOekitVersion() { oekitversion.Version = web.Version }
+
+// dedupEngines 列出需要挂健康端点的引擎并去重。
+//
+// 单端口模式下 panelEngine 为 nil，两者本就是同一个 Hertz 实例；
+// 同一个引擎上重复注册同名路由 Hertz 会直接 panic，所以这里必须去重。
+func dedupEngines(panel, acs *hertzserver.Hertz) []*hertzserver.Hertz {
+	if panel == nil || panel == acs {
+		return []*hertzserver.Hertz{acs}
+	}
+	return []*hertzserver.Hertz{panel, acs}
 }
 
 // statusWriter 记住实际写出的状态码。

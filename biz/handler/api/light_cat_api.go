@@ -16,26 +16,38 @@ import (
 // ListDevices .
 // @router /api/devices [GET]
 func ListDevices(ctx context.Context, c *app.RequestContext) {
-	payload, err := Deps.APIDevices(string(c.Query("tag")))
+	d := depsOrFail(c)
+	if d == nil {
+		return
+	}
+	payload, err := d.APIDevices(string(c.Query("tag")))
 	writeAPI(c, payload, err)
 }
 
 // GetDevice .
 // @router /api/devices/:id [GET]
 func GetDevice(ctx context.Context, c *app.RequestContext) {
+	d := depsOrFail(c)
+	if d == nil {
+		return
+	}
 	id, err := web.ParseDeviceID(c.Param("id"))
 	if err != nil {
 		writeAPI(c, nil, err)
 		return
 	}
-	payload, err2 := Deps.APIDevice(id)
+	payload, err2 := d.APIDevice(id)
 	writeAPI(c, payload, err2)
 }
 
 // ExportDevicesCSV .
 // @router /api/devices.csv [GET]
 func ExportDevicesCSV(ctx context.Context, c *app.RequestContext) {
-	header, recs, err := Deps.DevicesCSVRecords(string(c.Query("tag")))
+	d := depsOrFail(c)
+	if d == nil {
+		return
+	}
+	header, recs, err := d.DevicesCSVRecords(string(c.Query("tag")))
 	if err != nil {
 		writeAPI(c, nil, err)
 		return
@@ -46,6 +58,10 @@ func ExportDevicesCSV(ctx context.Context, c *app.RequestContext) {
 // ExportOpticalCSV .
 // @router /api/devices/:id/optical.csv [GET]
 func ExportOpticalCSV(ctx context.Context, c *app.RequestContext) {
+	d := depsOrFail(c)
+	if d == nil {
+		return
+	}
 	id, err := web.ParseDeviceID(c.Param("id"))
 	if err != nil {
 		writeAPI(c, nil, err)
@@ -57,7 +73,7 @@ func ExportOpticalCSV(ctx context.Context, c *app.RequestContext) {
 			limit = n
 		}
 	}
-	header, recs, err2 := Deps.OpticalCSVRecords(id, limit)
+	header, recs, err2 := d.OpticalCSVRecords(id, limit)
 	if err2 != nil {
 		writeAPI(c, nil, err2)
 		return
@@ -68,58 +84,82 @@ func ExportOpticalCSV(ctx context.Context, c *app.RequestContext) {
 // ListAlerts .
 // @router /api/alerts [GET]
 func ListAlerts(ctx context.Context, c *app.RequestContext) {
-	payload, err := Deps.APIAlerts()
+	d := depsOrFail(c)
+	if d == nil {
+		return
+	}
+	payload, err := d.APIAlerts()
 	writeAPI(c, payload, err)
 }
 
 // ListPresets .
 // @router /api/presets [GET]
 func ListPresets(ctx context.Context, c *app.RequestContext) {
-	payload, err := Deps.APIPresets()
+	d := depsOrFail(c)
+	if d == nil {
+		return
+	}
+	payload, err := d.APIPresets()
 	writeAPI(c, payload, err)
 }
 
 // ListFiles .
 // @router /api/files [GET]
 func ListFiles(ctx context.Context, c *app.RequestContext) {
-	payload, err := Deps.APIFiles()
+	d := depsOrFail(c)
+	if d == nil {
+		return
+	}
+	payload, err := d.APIFiles()
 	writeAPI(c, payload, err)
 }
 
 // FetchParams .
 // @router /api/devices/:id/fetch [POST]
 func FetchParams(ctx context.Context, c *app.RequestContext) {
+	d := depsOrFail(c)
+	if d == nil {
+		return
+	}
 	id, err := web.ParseDeviceID(c.Param("id"))
 	if err != nil {
 		writeAPI(c, nil, err)
 		return
 	}
 	body, _ := c.Body()
-	payload, err2 := Deps.APIFetch(id, bytes.NewReader(body))
+	payload, err2 := d.APIFetch(id, bytes.NewReader(body))
 	writeAPI(c, payload, err2)
 }
 
 // FetchNames .
 // @router /api/devices/:id/names [POST]
 func FetchNames(ctx context.Context, c *app.RequestContext) {
+	d := depsOrFail(c)
+	if d == nil {
+		return
+	}
 	id, err := web.ParseDeviceID(c.Param("id"))
 	if err != nil {
 		writeAPI(c, nil, err)
 		return
 	}
 	body, _ := c.Body()
-	payload, err2 := Deps.APIFetchNames(id, bytes.NewReader(body))
+	payload, err2 := d.APIFetchNames(id, bytes.NewReader(body))
 	writeAPI(c, payload, err2)
 }
 
 // CollectWifi .
 // @router /api/devices/:id/wifi [POST]
 func CollectWifi(ctx context.Context, c *app.RequestContext) {
+	d := depsOrFail(c)
+	if d == nil {
+		return
+	}
 	id, err := web.ParseDeviceID(c.Param("id"))
 	if err != nil {
 		writeAPI(c, nil, err)
 		return
 	}
-	payload, err2 := Deps.APIWifi(id)
+	payload, err2 := d.APIWifi(id)
 	writeAPI(c, payload, err2)
 }
