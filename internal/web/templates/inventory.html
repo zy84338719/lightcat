@@ -72,7 +72,7 @@
         <td class="mono nowrap">{{$d.ParamCount}}</td>
         <td class="mono">{{index $.ClientCounts $d.ID}}</td>
         {{if $.HasOptical}}
-        <td class="mono">{{if or $o.Rx $o.Tx}}{{$o.Rx}}{{if $o.Tx}} / {{$o.Tx}}{{end}}{{else}}<span class="hint">-</span>{{end}}</td>
+        <td class="mono">{{if or $o.Rx $o.Tx}}{{if $o.Rx}}{{$o.Rx}}{{else if $o.RxUnavailable}}<span class="hint" title='{{T "本采集通道不提供收光功率读数（非采样失败）：收光过低告警在这台设备上不会触发"}}'>不支持</span>{{end}}{{if $o.Tx}} / {{$o.Tx}}{{end}}{{else}}<span class="hint">-</span>{{end}}</td>
         {{end}}
         <td class="note" title="{{$d.Note}}">{{if $d.Note}}{{$d.Note}}{{else}}<span class="hint">-</span>{{end}}</td>
       </tr>

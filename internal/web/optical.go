@@ -23,6 +23,22 @@ func (o HostOptical) Has() bool {
 	return strings.TrimSpace(o.Rx) != "" || strings.TrimSpace(o.Tx) != ""
 }
 
+// RxUnavailable 表示「这台设备根本读不到收光」，而不是「这一轮没采到」。
+//
+// 为什么要分清这两件事：华为 V271-20 的普通账号 Web 接口（ontweb 通道）的
+// UserOpticInfo 只给 TX/电压/温度/偏流四个原始值，固件**不提供**上行收光 ——
+// 于是收光永远是空。但界面原来统一显示 "-"，跟「这一轮恰好没采到」长得一模一样，
+// 人只会读成「收光正常」。而收光过低告警（rx_low）在这种情况下永远不会触发，
+// 却没有任何提示 —— 属于典型的静默盲区：功能看起来在工作，实际是瞎的。
+//
+// 判据：认得出 TX（说明光口参数解析是通的）但压根没认到任何 Rx 参数
+// （RxName 为空）→ 是设备/通道能力缺失，而不是这一轮的采样缺失。
+func (o HostOptical) RxUnavailable() bool {
+	return strings.TrimSpace(o.Rx) == "" &&
+		strings.TrimSpace(o.RxName) == "" &&
+		strings.TrimSpace(o.Tx) != ""
+}
+
 // opticalDenyPath 里的路径不参与主机光功率判定 —— 它们是**无线**的功率参数，
 // 名字里同样带 power，混进来就会把发射功率当发光功率显示。
 //
