@@ -25,6 +25,7 @@ import (
 	"github.com/oekit/pkg/errors"
 
 	"github.com/zy84338719/lightcat/internal/store"
+	"github.com/zy84338719/lightcat/internal/trace"
 )
 
 // 任务类型（存在 tasks.kind 里）。
@@ -328,10 +329,10 @@ func (s *Server) StartJanitor(ctx context.Context) {
 // 顺带把主机的光功率也采一次（详情页「基本信息」里的收光 / 发光那两行）：
 // 它跟基本信息一起看，而且设备不报光功率时也不会多出东西（枚举不到就完事）。
 func (s *Server) RequestRefresh(deviceID int64) error {
-	if _, err := s.EnqueueFetchDeviceInfo(deviceID); err != nil {
+	if _, err := s.EnqueueFetchDeviceInfo(context.Background(), deviceID); err != nil {
 		return err
 	}
-	_, err := s.EnqueueFetchOptical(deviceID)
+	_, err := s.EnqueueFetchOptical(context.Background(), deviceID)
 	return err
 }
 
@@ -341,14 +342,14 @@ func (s *Server) RequestRefresh(deviceID int64) error {
 // 枚举光口所在的那几棵子树，用叶子名后缀把「像功率的」筛出来再取值，
 // 设备报什么名字就存什么名字；认方向交给界面（见 web.hostOpticalFrom）。
 // 枚举不到就是设备不报，不是错误。
-func (s *Server) EnqueueFetchOptical(deviceID int64) (int64, error) {
+func (s *Server) EnqueueFetchOptical(ctx context.Context, deviceID int64) (int64, error) {
 	d, err := s.store.GetDevice(deviceID)
 	if err != nil {
 		return 0, err
 	}
 	var last int64
 	for _, probe := range opticalProbes(d.DataModelRoot) {
-		id, err := s.enqueueSubtree(deviceID, gpnPayload{
+		id, err := s.enqueueSubtree(ctx, deviceID, gpnPayload{
 			Path:      probe.path,
 			Include:   probe.include,
 			ThenFetch: true, // 枚举到名字后，同一个会话里接着把值取回来
@@ -437,24 +438,24 @@ const opticalFetchMax = 200
 
 // FetchSubtree 给外部（Web/REST）用：枚举某个参数子树下的所有参数并把值取回来。
 func (s *Server) FetchSubtree(deviceID int64, path string, exclude []string, max int) error {
-	_, err := s.EnqueueFetchSubtree(deviceID, path, exclude, max)
+	_, err := s.EnqueueFetchSubtree(context.Background(), deviceID, path, exclude, max)
 	return err
 }
 
 // FetchNames 给外部（Web/REST）用：只枚举参数名，不取值（浏览参数树）。
 func (s *Server) FetchNames(deviceID int64, path string, nextLevel bool) error {
-	_, err := s.EnqueueFetchNames(deviceID, path, nextLevel)
+	_, err := s.EnqueueFetchNames(context.Background(), deviceID, path, nextLevel)
 	return err
 }
 
 // FetchWiFi 给外部（Web/REST）用：采集无线概况（看板上的 2.4G/5G 那一栏）。
 func (s *Server) FetchWiFi(deviceID int64) error {
-	_, err := s.EnqueueFetchWiFi(deviceID)
+	_, err := s.EnqueueFetchWiFi(context.Background(), deviceID)
 	return err
 }
 
 // EnqueueFetchDeviceInfo 入队一条「取设备基本信息」的任务。
-func (s *Server) EnqueueFetchDeviceInfo(deviceID int64) (int64, error) {
+func (s *Server) EnqueueFetchDeviceInfo(ctx context.Context, deviceID int64) (int64, error) {
 	d, err := s.store.GetDevice(deviceID)
 	if err != nil {
 		return 0, err
@@ -470,7 +471,7 @@ func (s *Server) EnqueueFetchDeviceInfo(deviceID int64) (int64, error) {
 		return 0, err
 	}
 	if created {
-		s.log.Info("已入队：取设备基本信息", "device_id", deviceID, "names", len(names))
+		s.log.InfoContext(ctx, "已入队：取设备基本信息", "device_id", deviceID, "names", len(names))
 	}
 	return id, nil
 }
@@ -719,11 +720,11 @@ func detectFTTRPrefix(names []string) (string, bool) {
 
 // EnqueueProbeCapabilities 入队一条「看看设备有什么能力」的探测任务。
 // 只枚举顶层对象，不改参数、不下发任何东西。
-func (s *Server) EnqueueProbeCapabilities(deviceID int64, root string) (int64, error) {
+func (s *Server) EnqueueProbeCapabilities(ctx context.Context, deviceID int64, root string) (int64, error) {
 	if root == "" {
 		root = "InternetGatewayDevice."
 	}
-	return s.enqueueSubtree(deviceID, gpnPayload{
+	return s.enqueueSubtree(ctx, deviceID, gpnPayload{
 		Path:      root,
 		NextLevel: true,
 		ProbeFTTR: true,
@@ -735,12 +736,12 @@ func (s *Server) EnqueueProbeCapabilities(deviceID int64, root string) (int64, e
 // 为什么不直接下发子树路径给 GetParameterValues：有的实现不支持部分路径
 // （genieacs-sim 会直接崩），所以走「GetParameterNames 枚举 + GetParameterValues 取值」
 // 这条处处都认的路。
-func (s *Server) EnqueueFetchSubtree(deviceID int64, path string, exclude []string, max int) (int64, error) {
+func (s *Server) EnqueueFetchSubtree(ctx context.Context, deviceID int64, path string, exclude []string, max int) (int64, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return 0, fmt.Errorf("参数路径不能为空")
 	}
-	return s.enqueueSubtree(deviceID, gpnPayload{
+	return s.enqueueSubtree(ctx, deviceID, gpnPayload{
 		Path:      path,
 		ThenFetch: true,
 		Exclude:   exclude,
@@ -752,18 +753,18 @@ func (s *Server) EnqueueFetchSubtree(deviceID int64, path string, exclude []stri
 //
 // 用途：**浏览参数树**。先把某层有哪些对象列出来（nextLevel=true 只看直接子节点），
 // 再决定往哪几个子树里钻 —— 比盲猜路径实用得多（真机上猜错一次就是一整轮上报周期）。
-func (s *Server) EnqueueFetchNames(deviceID int64, path string, nextLevel bool) (int64, error) {
+func (s *Server) EnqueueFetchNames(ctx context.Context, deviceID int64, path string, nextLevel bool) (int64, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return 0, fmt.Errorf("参数路径不能为空（要列根下一层可以用 InternetGatewayDevice.）")
 	}
-	return s.enqueueSubtree(deviceID, gpnPayload{
+	return s.enqueueSubtree(ctx, deviceID, gpnPayload{
 		Path:      path,
 		NextLevel: nextLevel,
 	})
 }
 
-func (s *Server) enqueueSubtree(deviceID int64, p gpnPayload) (int64, error) {
+func (s *Server) enqueueSubtree(ctx context.Context, deviceID int64, p gpnPayload) (int64, error) {
 	payload, _ := json.Marshal(p)
 	id, err := s.store.EnqueueTask(&store.Task{
 		DeviceID: deviceID,
@@ -771,7 +772,7 @@ func (s *Server) enqueueSubtree(deviceID int64, p gpnPayload) (int64, error) {
 		Payload:  string(payload),
 	})
 	if err == nil {
-		s.log.Info("已入队：枚举参数子树",
+		s.log.InfoContext(ctx, "已入队：枚举参数子树",
 			"device_id", deviceID, "path", p.Path,
 			"include", len(p.Include), "exclude", p.Exclude)
 	}
@@ -872,12 +873,12 @@ func wanSubtreePath(root string) string {
 }
 
 // EnqueueFetchWAN 入队一条「采集 WAN 连接概况」的任务。
-func (s *Server) EnqueueFetchWAN(deviceID int64) (int64, error) {
+func (s *Server) EnqueueFetchWAN(ctx context.Context, deviceID int64) (int64, error) {
 	d, err := s.store.GetDevice(deviceID)
 	if err != nil {
 		return 0, err
 	}
-	return s.enqueueSubtree(deviceID, gpnPayload{
+	return s.enqueueSubtree(ctx, deviceID, gpnPayload{
 		Path:      wanSubtreePath(d.DataModelRoot),
 		ThenFetch: true,
 		Include:   wanSummarySuffixes,
@@ -890,17 +891,17 @@ func (s *Server) EnqueueFetchWAN(deviceID int64) (int64, error) {
 // 走「枚举 + 按后缀白名单取值」：枚举能把真实的实例号圈出来（真机上 2.4G 是 1、5G 是 5，
 // 不是 1 和 2，写死就会读空），白名单保证只拉十几个摘要字段而不是四百多个。
 // SkipStore 让枚举出来的几百个名字不写库，免得把参数表刷屏。
-func (s *Server) EnqueueFetchWiFi(deviceID int64) (int64, error) {
+func (s *Server) EnqueueFetchWiFi(ctx context.Context, deviceID int64) (int64, error) {
 	d, err := s.store.GetDevice(deviceID)
 	if err != nil {
 		return 0, err
 	}
 	// 顺便采集设备的「主机列表」：关联终端表里通常没有终端名，
 	// 名字只能从 LANDevice.1.Hosts.Host.{i}.HostName 按 MAC 对出来（界面上的「主机名」行）。
-	if _, err := s.EnqueueFetchHosts(deviceID); err != nil {
-		s.log.Warn("入队采集主机列表失败", "device_id", deviceID, "err", err)
+	if _, err := s.EnqueueFetchHosts(ctx, deviceID); err != nil {
+		s.log.WarnContext(ctx, "入队采集主机列表失败", "device_id", deviceID, "err", err)
 	}
-	return s.enqueueSubtree(deviceID, gpnPayload{
+	return s.enqueueSubtree(ctx, deviceID, gpnPayload{
 		Path:      wifiSubtreePath(d.DataModelRoot),
 		ThenFetch: true,
 		Include:   wifiSummarySuffixes,
@@ -913,12 +914,12 @@ func (s *Server) EnqueueFetchWiFi(deviceID int64) (int64, error) {
 // 这张表（TR-098：LANDevice.1.Hosts.；TR-181：Hosts.）是**唯一**能拿到终端名的
 // 常用地方，界面上终端条目的「主机名」就靠它（拿不到就显示 N/A）。
 // 表本身很小（几台到几十台），只取几个字段，负担可以忽略。
-func (s *Server) EnqueueFetchHosts(deviceID int64) (int64, error) {
+func (s *Server) EnqueueFetchHosts(ctx context.Context, deviceID int64) (int64, error) {
 	d, err := s.store.GetDevice(deviceID)
 	if err != nil {
 		return 0, err
 	}
-	return s.enqueueSubtree(deviceID, gpnPayload{
+	return s.enqueueSubtree(ctx, deviceID, gpnPayload{
 		Path:      hostsSubtreePath(d.DataModelRoot),
 		ThenFetch: true,
 		Include:   hostsSuffixes,
@@ -1174,30 +1175,33 @@ func (s *Server) authorized(r *http.Request) bool {
 }
 
 func (s *Server) dispatch(w http.ResponseWriter, r *http.Request, sess *Session, env *Envelope) {
+	// trace_id 由 Hertz 中间件注入、经 adaptor 的 http.NewRequestWithContext 落到这里。
+	// 一次 Inform 触发的全部日志（纳管、逐条入队、后续响应处理）共用它。
+	ctx := r.Context()
 	m := env.Method
 	switch m.Local {
 	case "Inform":
 		s.onInform(w, r, sess, env, m)
 	case "Fault":
-		s.onFault(w, sess, env, m)
+		s.onFault(ctx, w, sess, env, m)
 	case "GetParameterValuesResponse":
-		s.onGetParameterValuesResponse(w, sess, env, m)
+		s.onGetParameterValuesResponse(ctx, w, sess, env, m)
 	case "GetParameterNamesResponse":
-		s.onGetParameterNamesResponse(w, sess, env, m)
+		s.onGetParameterNamesResponse(ctx, w, sess, env, m)
 	case "SetParameterValuesResponse":
-		s.onSimpleResponse(w, sess, m, "设置参数成功")
+		s.onSimpleResponse(ctx, w, sess, m, "设置参数成功")
 	case "RebootResponse":
 		// 设备只是“接受”了重启；随后它会自己断线重启，重连时带 1 BOOT。
-		s.onSimpleResponse(w, sess, m, "设备已接受重启指令，正在重启…")
+		s.onSimpleResponse(ctx, w, sess, m, "设备已接受重启指令，正在重启…")
 	case "DownloadResponse":
-		s.onDownloadResponse(w, sess, m)
+		s.onDownloadResponse(ctx, w, sess, m)
 	case "GetRPCMethods":
 		s.writeEnvelope(w, sess, env.ID, GetRPCMethodsResponseBody(supportedRPCs))
 	case "TransferComplete", "AutonomousTransferComplete", "RequestDownload", "Kicked":
-		s.onMiscCPERequest(w, sess, env, m)
+		s.onMiscCPERequest(ctx, w, sess, env, m)
 	default:
 		if strings.HasSuffix(m.Local, "Response") {
-			s.onSimpleResponse(w, sess, m, "已收到响应")
+			s.onSimpleResponse(ctx, w, sess, m, "已收到响应")
 			return
 		}
 		s.log.Warn("不支持的 RPC", "session", sess.ID, "method", m.Local)
@@ -1207,9 +1211,11 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request, sess *Session,
 
 // onInform 处理上报：这是「纳管」的入口。
 func (s *Server) onInform(w http.ResponseWriter, r *http.Request, sess *Session, env *Envelope, m *Node) {
+	// 一次 Inform 的整条级联共用这个 ctx：纳管日志与后面每一轮「已入队：…」都带它。
+	ctx := r.Context()
 	inf, err := ParseInform(m)
 	if err != nil {
-		s.log.Warn("Inform 解析失败", "session", sess.ID, "err", err)
+		s.log.WarnContext(ctx, "Inform 解析失败", "session", sess.ID, "err", err)
 		s.writeEnvelope(w, sess, env.ID, FaultBody(FaultInvalidArguments, err.Error()))
 		return
 	}
@@ -1244,7 +1250,7 @@ func (s *Server) onInform(w http.ResponseWriter, r *http.Request, sess *Session,
 
 	deviceID, created, err := s.store.UpsertDevice(dev)
 	if err != nil {
-		s.log.Error("写入设备失败", "serial", inf.DeviceID.SerialNumber, "err", err)
+		s.log.ErrorContext(ctx, "写入设备失败", "serial", inf.DeviceID.SerialNumber, "err", err)
 		s.writeEnvelope(w, sess, env.ID, FaultBody(FaultInternalError, "服务端存储失败"))
 		return
 	}
@@ -1255,7 +1261,7 @@ func (s *Server) onInform(w http.ResponseWriter, r *http.Request, sess *Session,
 	// 注意：下面用 deviceID（本次 Inform 解析出来的局部值）而不是 sess.DeviceID
 	// 落库，所以即便会话被丢弃，本次上报的参数也不会写错设备。
 	if !s.sess.bindDevice(sess, deviceID) {
-		s.log.Warn("会话归属冲突（疑似同一 NAT 出口下两台设备指纹相同），已丢弃会话让设备重开",
+		s.log.WarnContext(ctx, "会话归属冲突（疑似同一 NAT 出口下两台设备指纹相同），已丢弃会话让设备重开",
 			"device_id", deviceID, "session", sess.ID)
 		s.writeEnvelope(w, sess, env.ID, FaultBody(FaultInternalError, "会话冲突，请重试"))
 		return
@@ -1264,14 +1270,14 @@ func (s *Server) onInform(w http.ResponseWriter, r *http.Request, sess *Session,
 	// 参数落库（Inform 只带部分参数，不能当全量）
 	if len(inf.Params) > 0 {
 		if err := s.store.UpsertParams(deviceID, toStoreParams(inf.Params), "inform"); err != nil {
-			s.log.Warn("写入参数失败", "device_id", deviceID, "err", err)
+			s.log.WarnContext(ctx, "写入参数失败", "device_id", deviceID, "err", err)
 		}
 	}
 
 	// 厂商把根节点名大小写写错的情况（真机见过：InternetGateWayDevice.），
 	// 参数已原样存库，这里只提醒一句。
 	if typos := findRootTypo(root, inf.Params); len(typos) > 0 {
-		s.log.Warn("参数名根前缀大小写与标准不一致（按原文存库，未改写）",
+		s.log.WarnContext(ctx, "参数名根前缀大小写与标准不一致（按原文存库，未改写）",
 			"device_id", deviceID, "names", typos)
 	}
 
@@ -1286,12 +1292,15 @@ func (s *Server) onInform(w http.ResponseWriter, r *http.Request, sess *Session,
 		CurrentTime: inf.CurrentTime,
 		SourceIP:    clientIP(r),
 		ParamCount:  len(inf.Params),
+		// 存下 trace_id：面板「上报记录」里显示它，用户报障时复制这一个值
+		// 就能在日志里捞出整条链（纳管 + 后续每一轮入队 + 响应处理）。
+		TraceID: trace.From(ctx),
 	}); err != nil {
-		s.log.Warn("Inform 事件流水落库失败（面板「上报记录」会缺这一条）",
+		s.log.WarnContext(ctx, "Inform 事件流水落库失败（面板「上报记录」会缺这一条）",
 			"device_id", deviceID, "serial", dev.SerialNumber, "err", err)
 	}
 
-	s.log.Info("收到 Inform",
+	s.log.InfoContext(ctx, "收到 Inform",
 		"device_id", deviceID,
 		"serial", dev.SerialNumber,
 		"oui", dev.OUI,
@@ -1303,14 +1312,14 @@ func (s *Server) onInform(w http.ResponseWriter, r *http.Request, sess *Session,
 	// 第一次见面 / 每轮 BOOTSTRAP：把「最基本的设备信息」取回来
 	if s.cfg.AutoFetchDeviceInfo {
 		if created || inf.HasEvent("0 BOOTSTRAP") || root == "" || !s.hasDeviceInfo(deviceID) {
-			if _, err := s.EnqueueFetchDeviceInfo(deviceID); err != nil {
-				s.log.Warn("入队取设备信息失败", "device_id", deviceID, "err", err)
+			if _, err := s.EnqueueFetchDeviceInfo(ctx, deviceID); err != nil {
+				s.log.WarnContext(ctx, "入队取设备信息失败", "device_id", deviceID, "err", err)
 			}
 			// 顺手采一次光功率（详情页「基本信息」的收光 / 发光）：
 			// 光功率参数名各家不统一，只能枚举光口子树；只在首次纳管 / BOOTSTRAP 采一次
 			// （光功率变化很慢），需要新读数时详情页点「重新获取」。
-			if _, err := s.EnqueueFetchOptical(deviceID); err != nil {
-				s.log.Warn("入队采集光功率失败", "device_id", deviceID, "err", err)
+			if _, err := s.EnqueueFetchOptical(ctx, deviceID); err != nil {
+				s.log.WarnContext(ctx, "入队采集光功率失败", "device_id", deviceID, "err", err)
 			}
 		}
 	}
@@ -1318,7 +1327,7 @@ func (s *Server) onInform(w http.ResponseWriter, r *http.Request, sess *Session,
 	// 主动唤醒的前提：设备上的 ConnectionRequest 账号密码得是我们知道的那套。
 	// 设备不回读这两个参数（实测），所以得我们自己 provision。
 	if s.cfg.ConnReqEnabled {
-		s.EnsureConnReqCredentials(deviceID)
+		s.EnsureConnReqCredentials(ctx, deviceID)
 	}
 
 	// 无线概况（看板上的 2.4G/5G 那一栏）：首次纳管 / BOOTSTRAP 时采一次。
@@ -1328,21 +1337,21 @@ func (s *Server) onInform(w http.ResponseWriter, r *http.Request, sess *Session,
 	// 不刷新的话它会一直停在首次纳管那一刻（用户会以为「只有手动点才更新」）。
 	if s.cfg.WiFiRefreshInterval > 0 && !created && !inf.HasEvent("0 BOOTSTRAP") {
 		if last, ok := s.store.LastWifiSummaryAt(deviceID); !ok || time.Since(last) >= s.cfg.WiFiRefreshInterval {
-			if _, err := s.EnqueueFetchWiFi(deviceID); err != nil {
-				s.log.Warn("入队刷新无线概况失败", "device_id", deviceID, "err", err)
+			if _, err := s.EnqueueFetchWiFi(ctx, deviceID); err != nil {
+				s.log.WarnContext(ctx, "入队刷新无线概况失败", "device_id", deviceID, "err", err)
 			} else {
-				s.log.Debug("无线概况到期，已安排刷新", "device_id", deviceID, "last", last)
+				s.log.DebugContext(ctx, "无线概况到期，已安排刷新", "device_id", deviceID, "last", last)
 			}
 		}
 	}
 
 	if s.cfg.AutoFetchWiFi && (created || inf.HasEvent("0 BOOTSTRAP")) {
-		if _, err := s.EnqueueFetchWiFi(deviceID); err != nil {
-			s.log.Warn("入队采集无线概况失败", "device_id", deviceID, "err", err)
+		if _, err := s.EnqueueFetchWiFi(ctx, deviceID); err != nil {
+			s.log.WarnContext(ctx, "入队采集无线概况失败", "device_id", deviceID, "err", err)
 		}
 		// WAN 连接概况（详情页的「WAN 连接」区块），同样只取十几个摘要字段
-		if _, err := s.EnqueueFetchWAN(deviceID); err != nil {
-			s.log.Warn("入队采集 WAN 概况失败", "device_id", deviceID, "err", err)
+		if _, err := s.EnqueueFetchWAN(ctx, deviceID); err != nil {
+			s.log.WarnContext(ctx, "入队采集 WAN 概况失败", "device_id", deviceID, "err", err)
 		}
 	}
 
@@ -1350,10 +1359,10 @@ func (s *Server) onInform(w http.ResponseWriter, r *http.Request, sess *Session,
 	// （事件 8 DIAGNOSTICS COMPLETE），也可能什么都没说。
 	// 两种情况都主动读一次 —— 不依赖事件码，因为不是所有设备都会发。
 	if running, err := s.store.FindRunningTask(deviceID, TaskDiagnostics); err == nil && running != nil {
-		s.log.Info("有诊断在等结果，本次会话读一次",
+		s.log.InfoContext(ctx, "有诊断在等结果，本次会话读一次",
 			"device_id", deviceID, "task_id", running.ID,
 			"events", strings.Join(inf.EventCodes(), ", "))
-		s.enqueueDiagResultRead(sess, running.ID)
+		s.enqueueDiagResultRead(ctx, sess, running.ID)
 	}
 
 	// 能力探测（每台设备只做一次）：枚举顶层对象，看有没有 FTTR / 子设备对象。
@@ -1361,8 +1370,8 @@ func (s *Server) onInform(w http.ResponseWriter, r *http.Request, sess *Session,
 	// 不探测到就永远不显示那个区块 —— 不要给用户看一个空区块。
 	if s.cfg.ProbeCapabilities && (created || inf.HasEvent("0 BOOTSTRAP")) {
 		if probed, err := s.store.HasObjectNodes(deviceID); err == nil && !probed {
-			if _, err := s.EnqueueProbeCapabilities(deviceID, root); err != nil {
-				s.log.Warn("入队能力探测失败", "device_id", deviceID, "err", err)
+			if _, err := s.EnqueueProbeCapabilities(ctx, deviceID, root); err != nil {
+				s.log.WarnContext(ctx, "入队能力探测失败", "device_id", deviceID, "err", err)
 			}
 		}
 	}
@@ -1375,7 +1384,7 @@ func (s *Server) onInform(w http.ResponseWriter, r *http.Request, sess *Session,
 }
 
 // onGetParameterValuesResponse 处理我们下发的 GetParameterValues 的回执。
-func (s *Server) onGetParameterValuesResponse(w http.ResponseWriter, sess *Session, env *Envelope, m *Node) {
+func (s *Server) onGetParameterValuesResponse(ctx context.Context, w http.ResponseWriter, sess *Session, env *Envelope, m *Node) {
 	params := ParseParamValues(m.Child("ParameterList"))
 
 	// 这条 GPV 可能是一次「读回核对」（带着期望值），先把载荷拿出来
@@ -1388,7 +1397,7 @@ func (s *Server) onGetParameterValuesResponse(w http.ResponseWriter, sess *Sessi
 	if len(params) > 0 && sess.DeviceID != 0 {
 		sp := toStoreParams(params)
 		if err := s.store.UpsertParams(sess.DeviceID, sp, "getvalues"); err != nil {
-			s.log.Warn("写入参数失败", "device_id", sess.DeviceID, "err", err)
+			s.log.WarnContext(ctx, "写入参数失败", "device_id", sess.DeviceID, "err", err)
 		} else {
 			s.fireParamsStored(sess.DeviceID, sp)
 		}
@@ -1398,7 +1407,7 @@ func (s *Server) onGetParameterValuesResponse(w http.ResponseWriter, sess *Sessi
 				fields.DataModelRoot = root
 			}
 			if err := s.store.MergeDeviceFields(sess.DeviceID, fields); err != nil {
-				s.log.Warn("合并设备信息失败", "device_id", sess.DeviceID, "err", err)
+				s.log.WarnContext(ctx, "合并设备信息失败", "device_id", sess.DeviceID, "err", err)
 			}
 		}
 	}
@@ -1411,7 +1420,7 @@ func (s *Server) onGetParameterValuesResponse(w http.ResponseWriter, sess *Sessi
 	}
 
 	s.finishTask(sess, fmt.Sprintf("已采集 %d 个参数", len(params)))
-	s.log.Info("取回参数", "device_id", sess.DeviceID, "count", len(params))
+	s.log.InfoContext(ctx, "取回参数", "device_id", sess.DeviceID, "count", len(params))
 	s.dispatchNextTask(w, sess)
 }
 
@@ -1546,7 +1555,7 @@ func (s *Server) warnIfPartialResponse(sess *Session, got int) {
 // onGetParameterNamesResponse 处理 GetParameterNames 的回执。
 // 如果这条任务要求「枚举完顺便把值取回来」，就在这里接着入队一条 GPV ——
 // 它会被下面的 dispatchNextTask 在**同一个会话**里马上发出去。
-func (s *Server) onGetParameterNamesResponse(w http.ResponseWriter, sess *Session, env *Envelope, m *Node) {
+func (s *Server) onGetParameterNamesResponse(ctx context.Context, w http.ResponseWriter, sess *Session, env *Envelope, m *Node) {
 	infos := ParseParameterInfoStructs(m.Child("ParameterList"))
 
 	// 先把这条任务的载荷拿出来：它决定要不要把名字写库、要不要接着取值。
@@ -1562,11 +1571,11 @@ func (s *Server) onGetParameterNamesResponse(w http.ResponseWriter, sess *Sessio
 			})
 		}
 		if err := s.store.UpsertParams(sess.DeviceID, params, "getnames"); err != nil {
-			s.log.Warn("写入参数名失败", "device_id", sess.DeviceID, "err", err)
+			s.log.WarnContext(ctx, "写入参数名失败", "device_id", sess.DeviceID, "err", err)
 		}
 	}
 
-	s.log.Info("枚举参数名",
+	s.log.InfoContext(ctx, "枚举参数名",
 		"device_id", sess.DeviceID, "count", len(infos),
 		"path", p.Path, "stored", !p.SkipStore, "have_payload", havePayload)
 
@@ -1583,12 +1592,12 @@ func (s *Server) onGetParameterNamesResponse(w http.ResponseWriter, sess *Sessio
 			names = append(names, in.Name)
 		}
 		if prefix, ok := detectFTTRPrefix(names); ok {
-			s.log.Info("探测到 FTTR/子设备对象，接着采集", "device_id", sess.DeviceID, "prefix", prefix)
-			if _, err := s.EnqueueFetchSubtree(sess.DeviceID, prefix, nil, 0); err != nil {
-				s.log.Warn("入队采集 FTTR 子树失败", "device_id", sess.DeviceID, "err", err)
+			s.log.InfoContext(ctx, "探测到 FTTR/子设备对象，接着采集", "device_id", sess.DeviceID, "prefix", prefix)
+			if _, err := s.EnqueueFetchSubtree(ctx, sess.DeviceID, prefix, nil, 0); err != nil {
+				s.log.WarnContext(ctx, "入队采集 FTTR 子树失败", "device_id", sess.DeviceID, "err", err)
 			}
 		} else {
-			s.log.Info("未探测到 FTTR/子设备对象（界面不显示该区块）", "device_id", sess.DeviceID)
+			s.log.InfoContext(ctx, "未探测到 FTTR/子设备对象（界面不显示该区块）", "device_id", sess.DeviceID)
 		}
 	}
 
@@ -1610,7 +1619,7 @@ func (s *Server) pendingTaskKind(sess *Session) (string, int64) {
 // 结果往往要分几次才能拿到：设备刚收到请求时 DiagnosticsState 还是 Requested，
 // 要等它跑完（会单独发一次 Inform）才变成 Complete。所以这个读会重复几轮，
 // 直到状态明确为止。
-func (s *Server) enqueueDiagResultRead(sess *Session, diagTaskID int64) {
+func (s *Server) enqueueDiagResultRead(ctx context.Context, sess *Session, diagTaskID int64) {
 	if sess.DeviceID == 0 {
 		return
 	}
@@ -1640,7 +1649,7 @@ func (s *Server) enqueueDiagResultRead(sess *Session, diagTaskID int64) {
 		Kind:     TaskGetParameterValues,
 		Payload:  string(payload),
 	}); err != nil {
-		s.log.Warn("入队读诊断结果失败", "device_id", sess.DeviceID, "err", err)
+		s.log.WarnContext(ctx, "入队读诊断结果失败", "device_id", sess.DeviceID, "err", err)
 	}
 }
 
@@ -1768,9 +1777,9 @@ func (s *Server) chainFetchAfterNames(sess *Session, p gpnPayload, infos []Param
 }
 
 // onSimpleResponse 处理我们不特别关心的响应（如 SetParameterValuesResponse）。
-func (s *Server) onSimpleResponse(w http.ResponseWriter, sess *Session, m *Node, note string) {
+func (s *Server) onSimpleResponse(ctx context.Context, w http.ResponseWriter, sess *Session, m *Node, note string) {
 	if m.Local == "SetParameterValuesResponse" {
-		s.handleSetParameterValuesResponse(w, sess, m)
+		s.handleSetParameterValuesResponse(ctx, w, sess, m)
 		return
 	}
 	s.finishTask(sess, note)
@@ -1778,7 +1787,7 @@ func (s *Server) onSimpleResponse(w http.ResponseWriter, sess *Session, m *Node,
 }
 
 // handleSetParameterValuesResponse 处理设置参数的回执。
-func (s *Server) handleSetParameterValuesResponse(w http.ResponseWriter, sess *Session, m *Node) {
+func (s *Server) handleSetParameterValuesResponse(ctx context.Context, w http.ResponseWriter, sess *Session, m *Node) {
 	status := strings.TrimSpace(m.ChildText("Status"))
 
 	// 取出这次写了什么（下面要用它决定要不要重采无线概况）
@@ -1796,7 +1805,7 @@ func (s *Server) handleSetParameterValuesResponse(w http.ResponseWriter, sess *S
 
 	if status != "" && status != "0" {
 		msg := "设备拒绝写入（错误码 " + status + "）"
-		s.log.Warn("设置参数失败", "device_id", sess.DeviceID, "task_id", taskID, "status", status)
+		s.log.WarnContext(ctx, "设置参数失败", "device_id", sess.DeviceID, "task_id", taskID, "status", status)
 		s.failTask(sess, msg)
 		s.dispatchNextTask(w, sess)
 		return
@@ -1806,10 +1815,10 @@ func (s *Server) handleSetParameterValuesResponse(w http.ResponseWriter, sess *S
 	// 结果要等设备回报，可能轮到下一次 Inform。
 	if kind == TaskDiagnostics {
 		if err := s.store.SetTaskResult(taskID, "诊断已下发，等设备回报结果…"); err != nil {
-			s.log.Warn("更新诊断任务状态失败", "task_id", taskID, "err", err)
+			s.log.WarnContext(ctx, "更新诊断任务状态失败", "task_id", taskID, "err", err)
 		}
-		s.log.Info("诊断已下发，接着先读一次结果", "device_id", sess.DeviceID, "task_id", taskID)
-		s.enqueueDiagResultRead(sess, taskID)
+		s.log.InfoContext(ctx, "诊断已下发，接着先读一次结果", "device_id", sess.DeviceID, "task_id", taskID)
+		s.enqueueDiagResultRead(ctx, sess, taskID)
 		s.dispatchNextTask(w, sess)
 		return
 	}
@@ -1817,7 +1826,7 @@ func (s *Server) handleSetParameterValuesResponse(w http.ResponseWriter, sess *S
 	// 写入成功不等于真的生效：把刚写的参数读回来核对。
 	// 这一步是值得的 —— 有的 CPE 会默默接受写入但对某个参数不生效，
 	// 只有读回来才能看出来；而且顺带把界面上的值刷新成实际值。
-	s.enqueueReadBack(sess)
+	s.enqueueReadBack(ctx, sess)
 
 	// 写的是无线参数的话，顺手把整份无线概况也重采一遍。
 	//
@@ -1825,7 +1834,7 @@ func (s *Server) handleSetParameterValuesResponse(w http.ResponseWriter, sess *S
 	// 状态/信道/终端数这些**相关联**的值就停在写入前了。
 	// （这里真机上错过一次：5GHz 射频已经起来了、能搜到信号，
 	// 界面却还显示 Disabled —— 因为 Status 是几十分钟前采集的。）
-	s.refreshWiFiAfterWrite(sess, vals)
+	s.refreshWiFiAfterWrite(ctx, sess, vals)
 
 	s.finishTask(sess, "设置成功")
 	s.dispatchNextTask(w, sess)
@@ -1833,17 +1842,17 @@ func (s *Server) handleSetParameterValuesResponse(w http.ResponseWriter, sess *S
 
 // refreshWiFiAfterWrite 写入无线参数后，排一轮「重采无线概况」。
 // 延后到下一轮会话：无线参数可能异步生效，等下一轮拿到的才是生效后的值。
-func (s *Server) refreshWiFiAfterWrite(sess *Session, vals []ParamValue) {
+func (s *Server) refreshWiFiAfterWrite(ctx context.Context, sess *Session, vals []ParamValue) {
 	if sess.DeviceID == 0 || !containsWiFiParam(vals) {
 		return
 	}
-	id, err := s.EnqueueFetchWiFi(sess.DeviceID)
+	id, err := s.EnqueueFetchWiFi(ctx, sess.DeviceID)
 	if err != nil {
-		s.log.Warn("入队重采无线概况失败", "device_id", sess.DeviceID, "err", err)
+		s.log.WarnContext(ctx, "入队重采无线概况失败", "device_id", sess.DeviceID, "err", err)
 		return
 	}
 	sess.deferTask(id)
-	s.log.Info("写入的是无线参数，已排下一轮会话重采无线概况",
+	s.log.InfoContext(ctx, "写入的是无线参数，已排下一轮会话重采无线概况",
 		"device_id", sess.DeviceID, "task_id", id)
 }
 
@@ -1860,7 +1869,7 @@ func containsWiFiParam(vals []ParamValue) bool {
 }
 
 // enqueueReadBack 把刚设置过的那批参数读回来，并带上“期望值”以供比对。
-func (s *Server) enqueueReadBack(sess *Session) {
+func (s *Server) enqueueReadBack(ctx context.Context, sess *Session) {
 	if sess.pendingTask == 0 || sess.DeviceID == 0 {
 		return
 	}
@@ -1899,12 +1908,12 @@ func (s *Server) enqueueReadBack(sess *Session) {
 			Kind:     TaskGetParameterValues,
 			Payload:  string(payload),
 		}); err != nil {
-			s.log.Warn("入队读回校验失败", "device_id", sess.DeviceID, "err", err)
+			s.log.WarnContext(ctx, "入队读回校验失败", "device_id", sess.DeviceID, "err", err)
 			return
 		}
 		batches++
 	}
-	s.log.Info("设置成功，同一会话内读回核对",
+	s.log.InfoContext(ctx, "设置成功，同一会话内读回核对",
 		"device_id", sess.DeviceID, "params", len(names), "batches", batches)
 }
 
@@ -1985,13 +1994,13 @@ func normBool(s string) string {
 }
 
 // onFault 处理 CPE 回的错误。
-func (s *Server) onFault(w http.ResponseWriter, sess *Session, env *Envelope, m *Node) {
+func (s *Server) onFault(ctx context.Context, w http.ResponseWriter, sess *Session, env *Envelope, m *Node) {
 	f := ParseFault(m)
 	code, msg := 0, ""
 	if f != nil {
 		code, msg = f.Code, f.String
 	}
-	s.log.Warn("CPE 返回 Fault", "device_id", sess.DeviceID, "code", code, "msg", msg)
+	s.log.WarnContext(ctx, "CPE 返回 Fault", "device_id", sess.DeviceID, "code", code, "msg", msg)
 
 	if sess.pendingTask != 0 {
 		detail := fmt.Sprintf("CPE 返回错误 %d: %s", code, msg)
@@ -1999,7 +2008,7 @@ func (s *Server) onFault(w http.ResponseWriter, sess *Session, env *Envelope, m 
 			detail += fmt.Sprintf(" | %s -> %d %s", sf.Name, sf.Code, sf.String)
 		}
 		if err := s.store.FailTask(sess.pendingTask, detail); err != nil {
-			s.log.Warn("标记任务失败出错", "task_id", sess.pendingTask, "err", err)
+			s.log.WarnContext(ctx, "标记任务失败出错", "task_id", sess.pendingTask, "err", err)
 		}
 		sess.pendingTask = 0
 	}
@@ -2013,12 +2022,12 @@ func (s *Server) onFault(w http.ResponseWriter, sess *Session, env *Envelope, m 
 // 与 ping 诊断同一套异步语义），只把「已接受」写进任务结果留痕；
 // 设备用 SOAP Fault 拒绝时走 onFault，那条路会把任务标失败。
 // 一直不回报的由巡检按超时收尾（见 StartJanitor 的 FailStaleTasks）。
-func (s *Server) onDownloadResponse(w http.ResponseWriter, sess *Session, m *Node) {
+func (s *Server) onDownloadResponse(ctx context.Context, w http.ResponseWriter, sess *Session, m *Node) {
 	if t, ok := s.pendingTask(sess); ok && t.Kind == TaskDownload {
 		if err := s.store.SetTaskResult(t.ID, "设备已接受下载指令；等它取完文件回报 TransferComplete 才算完结"); err != nil {
-			s.log.Warn("记录 Download 受理失败", "task_id", t.ID, "err", err)
+			s.log.WarnContext(ctx, "记录 Download 受理失败", "task_id", t.ID, "err", err)
 		}
-		s.log.Info("设备已接受 Download（等 TransferComplete 收尾）",
+		s.log.InfoContext(ctx, "设备已接受 Download（等 TransferComplete 收尾）",
 			"device_id", sess.DeviceID, "task_id", t.ID)
 	}
 	sess.pendingTask = 0
@@ -2026,7 +2035,7 @@ func (s *Server) onDownloadResponse(w http.ResponseWriter, sess *Session, m *Nod
 }
 
 // onMiscCPERequest 处理 TransferComplete 等 CPE 主动发来的杂项请求。
-func (s *Server) onMiscCPERequest(w http.ResponseWriter, sess *Session, env *Envelope, m *Node) {
+func (s *Server) onMiscCPERequest(ctx context.Context, w http.ResponseWriter, sess *Session, env *Envelope, m *Node) {
 	switch m.Local {
 	case "TransferComplete":
 		key := m.ChildText("CommandKey")
@@ -2035,13 +2044,13 @@ func (s *Server) onMiscCPERequest(w http.ResponseWriter, sess *Session, env *Env
 			faultCode = fs.ChildText("FaultCode")
 			faultStr = fs.ChildText("FaultString")
 		}
-		s.log.Info("收到 TransferComplete",
+		s.log.InfoContext(ctx, "收到 TransferComplete",
 			"device_id", sess.DeviceID, "command_key", key, "fault_code", faultCode)
 		s.settleDownloadTask(key, faultCode, faultStr)
 		s.writeEnvelope(w, sess, env.ID, GenericResponseBody("TransferCompleteResponse"))
 	case "AutonomousTransferComplete":
 		// 设备自主升级（不经我们下发）的结果通报：记流水即可（informs 表已有事件码）
-		s.log.Info("收到 AutonomousTransferComplete",
+		s.log.InfoContext(ctx, "收到 AutonomousTransferComplete",
 			"device_id", sess.DeviceID,
 			"fault_code", func() string {
 				if fs := m.Child("FaultStruct"); fs != nil {
@@ -2051,7 +2060,7 @@ func (s *Server) onMiscCPERequest(w http.ResponseWriter, sess *Session, env *Env
 			}())
 		s.writeEnvelope(w, sess, env.ID, GenericResponseBody("AutonomousTransferCompleteResponse"))
 	default:
-		s.log.Info("收到 CPE 请求", "device_id", sess.DeviceID, "method", m.Local)
+		s.log.InfoContext(ctx, "收到 CPE 请求", "device_id", sess.DeviceID, "method", m.Local)
 		s.writeEnvelope(w, sess, env.ID, GenericResponseBody(m.Local+"Response"))
 	}
 }

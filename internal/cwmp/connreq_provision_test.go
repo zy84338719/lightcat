@@ -5,6 +5,7 @@
 package cwmp
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -147,12 +148,12 @@ func TestEnsureConnReqCredentialsEnqueuesOnce(t *testing.T) {
 		return n
 	}
 
-	srv.EnsureConnReqCredentials(id)
+	srv.EnsureConnReqCredentials(context.Background(), id)
 	if n := countSPV(); n != 1 {
 		t.Fatalf("新设备该下发一次，得到 %d 条", n)
 	}
 	// 任务还在排队：不该再下发一条
-	srv.EnsureConnReqCredentials(id)
+	srv.EnsureConnReqCredentials(context.Background(), id)
 	if n := countSPV(); n != 1 {
 		t.Fatalf("已经在排队时不该重复下发，得到 %d 条", n)
 	}
@@ -168,7 +169,7 @@ func TestEnsureConnReqCredentialsEnqueuesOnce(t *testing.T) {
 	if err := st.CompleteTask(tasks[0].ID, "设置成功"); err != nil {
 		t.Fatal(err)
 	}
-	srv.EnsureConnReqCredentials(id)
+	srv.EnsureConnReqCredentials(context.Background(), id)
 	if n := countSPV(); n != 2 {
 		t.Fatalf("设备上的用户名不一致时该重写，得到 %d 条", n)
 	}
@@ -177,7 +178,7 @@ func TestEnsureConnReqCredentialsEnqueuesOnce(t *testing.T) {
 // 关掉主动唤醒时什么都不做（不写设备）。
 func TestEnsureConnReqDisabled(t *testing.T) {
 	srv, st, id := newTestServer(t, Config{ConnReqEnabled: false, ConnReqUser: "acs", ConnReqPass: "secret"})
-	srv.EnsureConnReqCredentials(id)
+	srv.EnsureConnReqCredentials(context.Background(), id)
 	if n, _ := st.PendingTaskCount(id); n != 0 {
 		t.Errorf("关掉主动唤醒时不该下发任何任务，得到 %d 条", n)
 	}
@@ -187,7 +188,7 @@ func TestEnsureConnReqDisabled(t *testing.T) {
 func TestConnReqCredentialFlow(t *testing.T) {
 	srv, st, id := newTestServer(t, Config{ConnReqEnabled: true, ConnReqUser: "acs", ConnReqPass: "secret"})
 
-	srv.EnsureConnReqCredentials(id)
+	srv.EnsureConnReqCredentials(context.Background(), id)
 	tasks, _ := st.ListTasks(id, 5)
 	if len(tasks) != 1 || !strings.Contains(tasks[0].Payload, "ConnectionRequestPassword") {
 		t.Fatalf("下发的应该是写 CR 凭据的任务：%+v", tasks)
@@ -204,7 +205,7 @@ func TestConnReqCredentialFlow(t *testing.T) {
 	}
 
 	// 再劝一次：状态是 satisfied，且此后走进程内快速路径（不再查库）
-	srv.EnsureConnReqCredentials(id)
+	srv.EnsureConnReqCredentials(context.Background(), id)
 	if n, _ := st.PendingTaskCount(id); n != 0 {
 		t.Errorf("已经规范好了不该再下发，得到 %d 条", n)
 	}
