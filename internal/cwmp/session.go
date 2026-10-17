@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/oekit/concurrency/loop"
 )
 
 // sessionCookieName 是我们回给 CPE 的会话标识 cookie。
@@ -219,27 +221,24 @@ func (m *sessionManager) dropLocked(s *Session) {
 }
 
 // janitor 定期清理超时会话。
+//
+// 用 oekit/concurrency/loop 而不是手搓 ticker：单轮 panic 收编是关键 ——
+// 手写版本一轮 panic 会把整个循环带走，会话清理从此停摆（超时会话永不释放，
+// byID 一直涨），而且没有任何告警。
 func (m *sessionManager) janitor(ctx context.Context, every time.Duration) {
 	if every <= 0 {
 		every = 30 * time.Second
 	}
-	t := time.NewTicker(every)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			now := time.Now()
-			m.mu.Lock()
-			for _, s := range m.byID {
-				if now.Sub(s.LastSeen) > m.timeout {
-					m.dropLocked(s)
-				}
+	loop.Run(ctx, loop.Config{Interval: every, Name: "session-janitor"}, func(context.Context) {
+		now := time.Now()
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		for _, s := range m.byID {
+			if now.Sub(s.LastSeen) > m.timeout {
+				m.dropLocked(s)
 			}
-			m.mu.Unlock()
 		}
-	}
+	})
 }
 
 // cookieValue 从 Cookie 头里取出指定 cookie。

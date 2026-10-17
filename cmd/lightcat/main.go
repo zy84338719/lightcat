@@ -18,6 +18,7 @@ import (
 
 	"github.com/oekit/concurrency/async"
 	"github.com/oekit/concurrency/gopool"
+	"github.com/oekit/concurrency/loop"
 	oekitversion "github.com/oekit/core/version"
 	"github.com/oekit/pkg/errors"
 
@@ -184,17 +185,11 @@ func run(args []string) error {
 					}
 				})
 			}
-			poll()
-			tick := time.NewTicker(cfg.OntWebInterval)
-			defer tick.Stop()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-tick.C:
-					poll()
-				}
-			}
+			// 循环交给 oekit/concurrency/loop：一轮 panic 不会带走整个循环
+			//（手写 ticker 时一轮 poll 炸了，ontweb 采集就永久停摆且无告警）。
+			loop.Run(ctx, loop.Config{Interval: cfg.OntWebInterval, Name: "ontweb-poll"}, func(context.Context) {
+				poll()
+			})
 		})
 	}
 

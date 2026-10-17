@@ -22,6 +22,7 @@ import (
 
 	"github.com/oekit/concurrency/async"
 	"github.com/oekit/concurrency/gopool"
+	"github.com/oekit/concurrency/loop"
 	"github.com/oekit/pkg/errors"
 
 	"github.com/zy84338719/lightcat/internal/store"
@@ -291,36 +292,37 @@ func (s *Server) goBg(f func()) {
 	async.GoSafe(f)
 }
 
-// StartJanitor 起后台清理：超时会话、离线巡检。协程经 goBg 提交
-// （有进程级池时走池、可在关停前排空；否则退回 async.GoSafe 兜 panic）：
-// 巡检挂了不该把整个 ACS 进程带走（重启任务没人清，设备离线永远没人判）。
+// StartJanitor 起后台清理：超时会话、离线巡检。
+//
+// 循环交给 oekit/concurrency/loop 而不是手搓 ticker —— 它把四个易漂移的语义
+// 一次钉死，其中**单轮 panic 收编**是这里真正需要的：
+//
+// 手写版本是「整个循环塞进一个 goBg 任务」，一轮 panic 虽然被 GoSafe recover 了、
+// 进程不崩，但那会**把循环协程一起带走** —— 离线巡检从此静默停摆，设备离线永远
+// 不会被判出来，还没有任何告警（TestJanitorSurvivesPanicInTick 钉的就是这个）。
 func (s *Server) StartJanitor(ctx context.Context) {
 	s.goBg(func() { s.sess.janitor(ctx, 30*time.Second) })
 	s.goBg(func() {
-		t := time.NewTicker(s.cfg.OfflineCheckInterval)
-		defer t.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
-				// 在线状态：按设备自己上报的周期判定，超期先主动探测几次，
-				// 还是没回音才标离线（规则与边界见 offline.go）
-				s.startSweep(ctx)
-				// 诊断收尾：设备不支持 ping、或者干脆没回报时，
-				// 不能让任务永远挂着 running。
-				if n, err := s.store.FailStaleTasks(TaskDiagnostics, 5*time.Minute,
-					"设备未在 5 分钟内回报诊断结果（可能不支持 ping 诊断）"); err == nil && n > 0 {
-					s.log.Warn("诊断超时未回报，已判为失败", "count", n)
-				}
-				// 下载收尾：设备接受了却迟迟不回报 TransferComplete 时同样不能挂着。
-				// 窗口给 2 小时（大固件 + DelaySeconds 错峰确实可能很慢）。
-				if n, err := s.store.FailStaleTasks(TaskDownload, 2*time.Hour,
-					"设备未在 2 小时内回报 TransferComplete（下载可能失败或设备不支持）"); err == nil && n > 0 {
-					s.log.Warn("下载超时未回报，已判为失败", "count", n)
-				}
+		loop.Run(ctx, loop.Config{
+			Interval: s.cfg.OfflineCheckInterval,
+			Name:     "offline-sweep",
+		}, func(ctx context.Context) {
+			// 在线状态：按设备自己上报的周期判定，超期先主动探测几次，
+			// 还是没回音才标离线（规则与边界见 offline.go）
+			s.startSweep(ctx)
+			// 诊断收尾：设备不支持 ping、或者干脆没回报时，
+			// 不能让任务永远挂着 running。
+			if n, err := s.store.FailStaleTasks(TaskDiagnostics, 5*time.Minute,
+				"设备未在 5 分钟内回报诊断结果（可能不支持 ping 诊断）"); err == nil && n > 0 {
+				s.log.WarnContext(ctx, "诊断超时未回报，已判为失败", "count", n)
 			}
-		}
+			// 下载收尾：设备接受了却迟迟不回报 TransferComplete 时同样不能挂着。
+			// 窗口给 2 小时（大固件 + DelaySeconds 错峰确实可能很慢）。
+			if n, err := s.store.FailStaleTasks(TaskDownload, 2*time.Hour,
+				"设备未在 2 小时内回报 TransferComplete（下载可能失败或设备不支持）"); err == nil && n > 0 {
+				s.log.WarnContext(ctx, "下载超时未回报，已判为失败", "count", n)
+			}
+		})
 	})
 }
 
