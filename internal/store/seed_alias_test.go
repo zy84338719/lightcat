@@ -2,6 +2,7 @@ package store
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -34,7 +35,7 @@ func TestSeedCoversOntwebOpticParams(t *testing.T) {
 		{"voltage", ".supplyvoltage", "mv01"},
 		{"bias_current", ".biascurrent", "ua2"},
 	} {
-		key := want.field + "|x_hw_lanopticinterface|" + want.suffix
+		key := want.field + "|X_HW_LANOpticInterfaceConfig|" + want.suffix
 		if !have[key] {
 			t.Errorf("种子缺 %s 的规则（contains=x_hw_lanopticinterface suffix=%s）", want.field, want.suffix)
 		}
@@ -55,7 +56,7 @@ func TestSeedDoesNotFakeRxPower(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, a := range als {
-		if a.Field == "rx_power" && a.MatchContains == "x_hw_lanopticinterface" {
+		if a.Field == "rx_power" && strings.EqualFold(a.MatchContains, "X_HW_LANOpticInterfaceConfig") {
 			t.Error("不该给 X_HW_LANOpticInterface 族加 rx_power 规则：该固件不提供收光")
 		}
 	}
@@ -81,4 +82,75 @@ func TestOntwebAliasMigrationIdempotent(t *testing.T) {
 	if len(first) != len(second) {
 		t.Errorf("重开后别名数从 %d 变成 %d，迁移不幂等", len(first), len(second))
 	}
+}
+
+// TestOntwebAliasNoCaseDuplicate 踩过的坑：迁移 #19 最初把 contains 写成小写
+// 'x_hw_lanopticinterface'，与表上已有的规范写法 'X_HW_LANOpticInterfaceConfig'
+// 大小写不同 —— 而 UNIQUE(field, match_contains, match_suffix) 对大小写敏感，
+// 于是 INSERT OR IGNORE 没去重成，老库上每个字段多出一行（现网就是这么中招的）。
+//
+// Matches 是大小写不敏感的，所以行为无害，但同一份规则存两份说不清来源，
+// 而且 #19 注释里「老库不会重复插入」那句话当时是错的。
+//
+// 这条测试按**现网的真实状态**复现：迁移 #19 跑完后人为插入那 4 条重复行、
+// 把 user_version 停在 19（模拟当时的状态），再重开一次 —— 迁移 #20 必须清掉它们。
+func TestOntwebAliasNoCaseDuplicate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "dup.db")
+	st, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 复现 bug 态：#19 插出的 4 条小写行已经躺在库里
+	for _, r := range []struct{ field, suffix, decode string }{
+		{"tx_power", ".transceiverpower", "dbm_01uw"},
+		{"temperature", ".transceivertemperature", "div256"},
+		{"voltage", ".supplyvoltage", "mv01"},
+		{"bias_current", ".biascurrent", "ua2"},
+	} {
+		if _, err := st.db.Exec(`INSERT INTO param_aliases
+			(field, vendor, match_contains, match_suffix, decode, priority, note, updated_at)
+			VALUES (?, 'Huawei', 'x_hw_lanopticinterface', ?, ?, 10, '重复行', '')`,
+			r.field, r.suffix, r.decode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := countAliasFamily(t, st, ""); n != 8 {
+		t.Fatalf("构造 bug 态失败：该族应有 8 行（4 规范 + 4 重复），实际 %d", n)
+	}
+	// 迁移是「按 user_version 只跑一次」的，把版本号退回 19 —— 模拟「跑过 #19、
+	// 还没跑 #20」的真实状态（迁移只能追加，不能回头重跑，这是测它的唯一办法）。
+	if _, err := st.db.Exec(`PRAGMA user_version = 19`); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+
+	// 重开 → 迁移 #20 应该清掉重复行
+	st2, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st2.Close()
+
+	if n := countAliasFamily(t, st2, ""); n != 4 {
+		t.Errorf("迁移 #20 后该族有 %d 行，期望 4（重复行没清干净）", n)
+	}
+	if n := countAliasFamily(t, st2, "X_HW_LANOpticInterfaceConfig"); n != 4 {
+		t.Errorf("规范写法只剩 %d 条，期望 4（#20 误删了正常的）", n)
+	}
+}
+
+// countAliasFamily 数该族别名行数；canonical 非空时只数规范写法。
+func countAliasFamily(t *testing.T, st *Store, canonical string) int {
+	t.Helper()
+	q := `SELECT count(*) FROM param_aliases WHERE lower(match_contains) LIKE '%lanopticinterface%'`
+	var args []any
+	if canonical != "" {
+		q += ` AND match_contains = ?`
+		args = append(args, canonical)
+	}
+	var n int
+	if err := st.db.QueryRow(q, args...).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
 }

@@ -292,10 +292,26 @@ var migrations = []string{
 	// INSERT OR IGNORE：现网已手工补过这 4 条，靠 UNIQUE(field, match_contains,
 	// match_suffix) 天然去重，老库不会重复插入。
 	`INSERT OR IGNORE INTO param_aliases (field, vendor, match_contains, match_suffix, decode, priority, note, updated_at) VALUES
-  ('tx_power',     'Huawei', 'x_hw_lanopticinterface', '.transceiverpower',    'dbm_01uw', 10, 'ontweb Web 通道光口页：7499 → -1.24997 dBm（与设备页面一致）', ''),
-  ('temperature',  'Huawei', 'x_hw_lanopticinterface', '.transceivertemperature', 'div256', 10, 'ontweb Web 通道光口页：13056 → 51.0 ℃', ''),
-  ('voltage',      'Huawei', 'x_hw_lanopticinterface', '.supplyvoltage',       'mv01',     10, 'ontweb Web 通道光口页：31450 → 3.145 V', ''),
-  ('bias_current', 'Huawei', 'x_hw_lanopticinterface', '.biascurrent',         'ua2',      10, 'ontweb Web 通道光口页：9500 → 19.0 mA', '')`,
+  ('tx_power',     'Huawei', 'X_HW_LANOpticInterfaceConfig', '.transceiverpower',    'dbm_01uw', 10, 'ontweb Web 通道光口页：7499 → -1.24997 dBm（与设备页面一致）', ''),
+  ('temperature',  'Huawei', 'X_HW_LANOpticInterfaceConfig', '.transceivertemperature', 'div256', 10, 'ontweb Web 通道光口页：13056 → 51.0 ℃', ''),
+  ('voltage',      'Huawei', 'X_HW_LANOpticInterfaceConfig', '.supplyvoltage',       'mv01',     10, 'ontweb Web 通道光口页：31450 → 3.145 V', ''),
+  ('bias_current', 'Huawei', 'X_HW_LANOpticInterfaceConfig', '.biascurrent',         'ua2',      10, 'ontweb Web 通道光口页：9500 → 19.0 mA', '')`,
+	// 20：删掉迁移 #19 插出的重复别名行。
+	//
+	// #19 的 contains 当时写成小写 'x_hw_lanopticinterface'（**少了 Config**），
+	// 而表上已有（手工补过的、也是 #19 该沿用的）写法是 'X_HW_LANOpticInterfaceConfig'。
+	// param_aliases 的
+	// UNIQUE(field, match_contains, match_suffix) 对大小写敏感，于是 INSERT OR IGNORE
+	// 没去重成，老库上每个字段多出一行。Matches 是大小写不敏感的，所以行为无害，
+	// 但同一份规则存两份会让「这条规则是哪来的」说不清。
+	//
+	// #19 本身已修成规范写法（新库不会再有这个问题），这里只负责把老库已经插进去的
+	// 重复行清掉，并保留规范写法的那些。
+	// 用 LIKE 而不是等值：漏掉的形态不止一种（大小写、少了 Config），
+	// 「这一族里凡不是规范写法的一律清掉」比逐个形态列举更不容易再漏。
+	`DELETE FROM param_aliases
+	   WHERE lower(match_contains) LIKE '%lanopticinterface%'
+	     AND match_contains <> 'X_HW_LANOpticInterfaceConfig'`,
 }
 
 // migrate 把库升到当前版本。幂等：已升过的直接跳过。
