@@ -12,6 +12,8 @@
 > HTTPS（`-tls-cert/-tls-key`）、光功率趋势历史（收光/发光/温度，含 Web 适配通道）、
 > 阈值告警（收光过低/过温/光口异常/离线，webhook 推送）、**FR-16 面板可用性**
 > （`/inventory` 资产盘点、`/help` 使用帮助、机器端点鉴权口径收紧）。
+> 工程规范对齐 oekit（errors.Wrap 错误链、async.GoSafe 协程安全）已完成第一轮，
+> 剩余差距立项见 **§13 工程规范对齐 oekit：差距清单**（OEK-1~11）。
 > 各条目的实现口径见对应 FR 小节。
 > 验收：`go test ./...` 全绿 + `scripts/verify-s1.sh` **415 / 0**（另 3 项浏览器用例在无
 > headless Chrome 的机器上合规跳过）、`verify-interop.sh` 8 / 0。
@@ -614,3 +616,203 @@ log_redact = true
 - 工作目录 `/path/to/ACS` 为空，未初始化 git。
 - 本机（LMDE 7 / Debian 13）**尚未安装 Go**；`apt` 中有 `golang-go`（1.24/1.26 backports）可选。
 - 编码前需先：安装 Go、`git init`、确定模块路径（如 `github.com/xxx/acs`）。
+
+---
+
+## 13. 工程规范对齐 oekit：差距清单（2026-10-17 审计）
+
+> 背景：仓库已引入 `github.com/oekit/pkg`（错误链）与 `github.com/oekit/concurrency`（协程安全），
+> 并按 [oekit llms.txt](https://oekit.github.io/llms.txt) 的 AI Agent 硬性规范完成第一轮对齐
+> （`errors.Wrap` 全量迁移、裸 goroutine 全部换 `async.GoSafe`，见 CONTRIBUTING「代码与文档约定」）。
+> 本节是对照规范逐条审计后**尚未满足**的差距，编号 OEK-*，供排期与拍板。
+> 有意不采纳的条目也保留在表里并写明理由，避免后人重复评估。
+
+### 13.1 需求列表
+
+> 2026-10-17：OEK-1~7 已提交 GitHub 跟踪（[zy84338719/lightcat#1~#7](https://github.com/zy84338719/lightcat/issues)），
+> oekit 侧短板（logx slog 后端不可注入 Handler，见 OEK-8 说明）已提交
+> [oekit/logx#6](https://github.com/oekit/logx/issues/6)。下表 issue 列对应编号。
+
+| 编号 | issue | 差距 | 规范出处 | 现状（审计证据） | 建议方案 | 优先级 | 状态 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| OEK-1 | [#1](https://github.com/zy84338719/lightcat/issues/1) | 生命周期签名不统一 | oekit AGENTS.md「生命周期」：组件 Close 统一 `Close(ctx) error` + sync.Once 幂等 | `store.Store.Close()` 是 `Close() error`，无 ctx、无幂等护栏（`internal/store/store.go:347`） | 给 Store 加 `sync.Once`；是否升级为 `Close(ctx)` 待定（调用点仅 main 一处，升级成本低但要过一遍测试） | P1 | ✅ 已完成
+| OEK-2 | [#2](https://github.com/zy84338719/lightcat/issues/2) | 关停顺序存在竞态 | 同上 +「优雅关停」 | 巡检协程只受 ctx 控、无人 Wait（`cwmp.Server` 无 WaitGroup）；离线探测协程**完全不感知 ctx**（`offline.go`），main 里 `defer st.Close()` 先于它们结束执行 → 关停窗口期的探测回写打在已关闭的库上（报错丢结果，不崩进程） | 巡检与探测协程纳入统一的生命周期对象：shutdown 时先 cancel + Wait，再关 Store | P1 | ✅ 已完成
+| OEK-3 | [#3](https://github.com/zy84338719/lightcat/issues/3) | 离线探测无并发上限 | oekit/concurrency gopool（协程池） | `SweepOffline` 每台待探设备起一个 goroutine，数量不受控（`offline.go:179` 一带）；批量掉线时 1000 台 = 1000 个并发 ConnectionRequest，每个最长 ConnReqTimeout（默认 10s） | 引入 gopool 池化，池大小做成配置（如 `-probe-concurrency`，默认 20）；与 NFR-3（1000+ 设备）直接相关 | P1 | ✅ 已完成
+| OEK-4 | [#4](https://github.com/zy84338719/lightcat/issues/4) | 面板入队失败被静默吞掉 | oekit AGENTS.md「错误处理」：所有 error 禁止 `_` 忽略 | 三个表单处理器入队失败也重定向「成功」：`web.go` 的 `_ = s.ctrl.RequestRefresh(id)`、`_ = s.ctrl.FetchWiFi(id)`、`_ = s.ctrl.FetchSubtree(...)`；Inform 流水落库失败无日志：`handler.go:1236 _ = s.store.InsertInform(...)` | 重定向机制本就支持 `err=1` 反馈（presets 已在用），入队失败应带回反馈；InsertInform 失败至少 Warn 留痕 | P2 | ✅ 已完成
+| OEK-5 | [#5](https://github.com/zy84338719/lightcat/issues/5) | 业务错误无机器可读码 | oekit AGENTS.md「错误处理」：业务错误用 BizError（BizCode/HTTPCode 双轨） | `APIError` 只有 HTTP 状态 + 文本；§2.4 修正②约定 ACS 错误码 8xxx，但 API 错误体 `{"error": "…"}` 里没有 code 字段 | `APIError` 增加 `BizCode`（8xxx 段），错误体加 `"code"`；是否以 BizError 作底层实现可在做时评估，注意不破坏 415 项 e2e 已钉死的 JSON 形状（新增字段属加法，不属改形） | P2 | ⬜ 未开始
+| OEK-6 | [#6](https://github.com/zy84338719/lightcat/issues/6) | settings 表每请求读库 | oekit/pkg cache（CacheAside / SingleFlightCache） | `currentAPIToken` 与 Creds 每请求一条 SELECT（注释声明是刻意的：换「面板改完立即生效」）；SQLite `MaxOpenConns(1)` 串行化下，这条 SELECT 与所有写竞争同一连接 | 带写失效的进程内缓存：`SetSetting` 时失效对应键，「立即生效」语义不丢；**先压测拿基线再决定**（NFR-3/4 均标注待压测） | P2（压测后拍板） | ⬜ 待压测
+| OEK-7 | [#7](https://github.com/zy84338719/lightcat/issues/7) | 包级可变全局指针 | oekit AGENTS.md「并发安全」：包级全局可变状态用 atomic.Pointer[T] | `biz/handler/api.Deps *web.Server` 是裸全局指针（`deps.go`），靠「先 SetDeps 再 GeneratedRegister」的装配顺序保证安全 | 改 `atomic.Pointer[web.Server]` + getter；改动小、顺手消掉一类理论上的 race | P3 | ✅ 已完成
+| OEK-8 | — | 日志门面与 trace_id | oekit/logx：Ctx* 方法自动携带 trace_id；LOG_LEVEL 环境变量统一生效 | slog 直连，无 trace 抽取器；级别走 `-log-level` 旗标 | **阻塞已解除**（2026-10-17 复核）：logx **v0.4.0** 已实现 `NewSlogLogger(service, opts...)` + `WithHandler(slog.Handler)`，正是本仓当初提的 [oekit/logx#6](https://github.com/oekit/logx/issues/6)（已 COMPLETED）。go.sum 里因 `oekit/hertz` 间接锁在 v0.2.0 才看不见 | 真正的缺口只剩 **trace_id 本身**：接 `tracing/traceid` + `logx.SetTraceExtractor`，让一次设备上报的跨层日志能串起来。整包切 logx 门面（把 `*slog.Logger` 换成 `logx.Logger`）**不划算**，理由见 14.5 | P3（随观测性需求） | ⬜ 可启动 |
+| OEK-9 | — | /metrics 手拼文本 | oekit/metrics（Prometheus 门面 + 弹性指标族） | 5 个 gauge 手拼文本，注释明确「零依赖、够用」 | 指标族增长（如加直方图/每设备指标）时再迁 oekit/metrics；当前迁移纯属替换不改能力 | 暂不采纳 | — 不采纳
+| OEK-10 | — | 应用骨架自研 | oekit/bootstrap：App/Run 骨架 + healthz + 优雅关停 | main.go 手写信号处理、关停、句柄收养 | **不采纳**：零断点重启（listener 句柄父子进程交接、pid 交接）高度定制，bootstrap 的标准骨架覆盖不了这套流程；强行套用要 fork bootstrap | 不采纳（记录理由） | — 不采纳
+| OEK-11 | — | CI 形态 | oekit 统一 CI：各仓 ci.yml 仅薄调用共享 reusable workflow | 本仓自有 ci.yml / build.yml / release.yml | **不适用**：该规则只约束 oekit 矩阵成员仓；lightcat 是 oekit 的使用方而非成员 | 不适用 | — 不适用
+
+### 13.2 已合规、无需立项的项（审计结论，供对照）
+
+- **错误链**：全部走 `pkg/errors.Wrap`（58 处迁移完成），同进程单一 errors 包装包，满足类型同一性红线；`APIError` 是 HTTP 边界载体、从不参与 `errors.Is/As` 判定，与 oekit errors 无类型冲突。
+- **goroutine 安全**：裸 `go func` / `go method` 已清零（10 处），全部 `async.GoSafe`；ontweb 轮询保留「单轮失败跳过、循环继续」语义（外层包循环、内层包单轮）。
+- **日志风格**：全仓 slog kv 结构化（`log.Info("事件", "k", v)`），与 logx 规范要求的 kv 风格同口径；logx 的 slog 后端硬编码 JSON 输出、无法注入自定义 Handler，现在切会改变用户可见的 text 日志格式——归入 OEK-8 随观测性一起动。
+- **包级不可变全局**（regex 表、选项表、embed.FS、i18n 的 sync.Once 缓存）：初始化后只读，符合规范。
+- **web.Options 命名**：符合「XxxOption 不许裸 Option」精神。
+- **响应写侧的 `_ =` 忽略**（`w.Write`、`Encode` 等）：对端断连无处理手段，行业惯例，不算违规。
+
+### 13.3 验收口径
+
+- OEK-1/2：关停期间压测脚本打 Inform 流量 + `kill -TERM`，无「database is closed」类日志；`go test -race` 全绿。
+- OEK-3：批量置 100 台设备离线（模拟器开关），单轮 SweepOffline 峰值并发 ≤ 配置值；巡检一轮总时长有上界。
+- OEK-4：e2e 补断言——入队失败时重定向携带 `err=1`（反向验证：把注入的失败去掉断言会红）。
+- OEK-5：e2e 断言错误体含 `code` 字段；既有 415 项断言全数保持绿（只加不改）。
+
+### 13.4 第二轮落地记录（2026-10-17，OEK-1/2/3/4/7 已完成）
+
+> 本节记录这轮实际怎么做的，重点是**与原建议方案不一致的地方**及原因，
+> 避免后人按旧建议再改一遍。
+
+**OEK-1（Store 生命周期）**：按建议只加 `sync.Once` 幂等，**没有**升级成 `Close(ctx) error`。
+`*sql.DB` 没有 ctx 语义的关闭动作（ctx 在该层用于取消在飞的查询，那由 `database/sql`
+自己管），照抄 ctx 参数只会得到一个恒为 nil 的假接口。已加 `Closed() bool` 与哨兵
+`ErrClosed`，供后台协程自我判断「库已经关了」。幂等同时让「正常退出显式关一次 +
+defer 兜底再关一次」两条路径能共存 —— 这正是 OEK-2 需要的安全网。
+
+**OEK-2（关停顺序）**：**方案调整** —— 没用 WaitGroup 方案，改为进程级 `gopool.Pool`
+（`newBackgroundPool` / `shutdownBackground`，cmd/lightcat）。理由：池的 `Close(ctx)`
+自带排空语义，且 panic 兜底是内建的，不需要每个组件各写一遍 WaitGroup + recover。
+关停顺序固化为 **ctx 取消 → `shutdownBackground` 排空（上限 `backgroundDrainTimeout` 5s）
+→ `st.Close()`**。两处配套改造：
+- ontweb 轮询原来是 `for range tick.C`，**根本不理 ctx**，SIGTERM 叫不醒它 —— 改成 `select` + ctx；
+- 离线探测探测协程同样改成 ctx 感知（见 OEK-3）。
+
+**OEK-3（探测并发）**：**没有只靠 gopool**。`gopool.Pool` 的 `MaxIdleWorkers` 不是硬上限
+（超出部分「即用即走」，见其 `PoolOption` 注释），拿它当并发闸是假的。改为
+buffered channel 硬闸 `Server.probeGate`（容量 `cfg.ProbeConcurrency`，新增
+`-probe-concurrency` / `ACS_PROBE_CONCURRENCY`，默认 20）：
+- **取闸用阻塞 + ctx**，不是「取不到就跳过」。跳过会让探测计数不前进，大批设备同时掉线时
+  要多等好几个 `OfflineCheckInterval` 才凑得够 `OfflineProbeAttempts`；阻塞取槽让吞吐维持在
+  闸值上限，单轮最坏时长有明确上界 `ceil(待探数/闸值) × ConnReqTimeout`。
+- 另加 `startSweep`：探测变慢后一轮可能跨过下一个 tick，用互斥保证同一时刻只有一轮在飞
+  （否则两轮会同时判同一台设备、把探测计数记重）。
+- `SendConnectionRequestCtx` 让关停能立刻打断在飞的探测；关停期被取消的探测**不记**失败
+  （否则一次正常 SIGTERM 会把全网设备推进离线判定）。
+
+**OEK-4（静默吞错）**：按建议做。三个表单处理器改为 `redirectDeviceNotice(..., err=1)`，
+`InsertInform` 失败记 Warn。
+
+**OEK-7（全局指针）**：`atomic.Pointer[web.Server]` + `Deps()` getter，
+另加 `depsOrFail(c)`：未注入时写 500 而不是 nil 解引用崩溃。
+
+**顺带修掉的既有隐患**（不是 OEK 项，但被本轮改动踩出来）：
+`web.Options.Log` 文档写「nil = 不记」，而 `Server` 上所有 `s.log.*` 调用都无判空 ——
+`Register(mux, st, ctrl, Options{})` 之后走任何日志路径都会 nil 解引用崩溃。
+现已在 `Register` 里兜底 `slog.Default()`。
+
+**本轮新增回归测试**（`go test -race ./...` 全绿；`verify-s1.sh` 415/0、`verify-interop.sh` 8/0 不变）：
+
+| 测试 | 钉住的契约 |
+| --- | --- |
+| `store.TestClose_Idempotent` / `_ConcurrentSafe` | 重复与并发 Close 返回同一成功结果 |
+| `cwmp.TestSweepOffline_ProbeConcurrencyCapped` | 峰值并发 ≤ 闸值，且 ≥2（没被压成串行） |
+| `cwmp.TestSweepOffline_CtxCancelStopsDispatch` | ctx 一取消，巡检不硬等满批次 |
+| `cwmp.TestAcquireProbeSlot_ReleaseIsIdempotent` | 重复 release 不会把闸越用越宽 |
+| `cwmp.TestSweepOffline_ShutdownCancelledProbeNotCounted` | 关停取消的探测不计入 ProbeCount |
+| `web.TestEnqueueFailure_FeedsBackToUser` | 三处入队失败均带 `err=1` |
+| `web.TestEnqueueSuccess_NoErrorFlag` | 反向验证：成功时不带 `err=1`（防「永远带 err=1」也过） |
+| `main.TestShutdownBeforeStoreClose` | 排空后无后台写撞上已关闭的库 |
+| `main.TestShutdownBackground_ToleratesTimeout` | 排空有上界，卡住的任务吊不住进程 |
+
+`TestSweepOffline_ProbeConcurrencyCapped` 做过反向验证：把闸开到设备数（12）时实测峰值
+确实为 12，说明「≤3」确实是闸压出来的，而不是观测本身测不出并发。
+
+
+---
+
+## 14. 第三轮：按 oekit llms.txt 全面体检（2026-10-17）
+
+> 依据：[oekit llms.txt](https://oekit.github.io/llms.txt) 的模块地图逐条比对，
+> 不只看已引入的包，而是把**尚未引入**的模块也过了一遍。
+> 本节记三件事：补上的真缺口、按规范执行后的**反向修正**、以及有意不采纳的。
+
+### 14.1 补上的真缺口
+
+**探针端点（`oekit/hertz/health`）—— 收益最大的一项。**
+
+审计前的状态是「健康检查没有端点」，而 deploy 目录里两处探活配置都是绕过：
+
+| 位置 | 原来 | 问题 |
+| --- | --- | --- |
+| `deploy/k8s/statefulset.yaml` | startup/readiness/liveness 全打 `GET /` | `/` 是**面板首页**：渲染模板 + 查设备表 + 算统计。库一忙探针就超时，k8s 会把好端端的容器重启掉 |
+| `Dockerfile` HEALTHCHECK | `wget .../${LIGHTCAT_HEALTH_PORT:-7547}/` | 默认端口就是 CWMP 端口，对 GET 一律 405；双端口部署必须手工设 `LIGHTCAT_HEALTH_PORT`，忘了就是容器永远 unhealthy |
+
+清单里 k8s 那行注释本身就写着「未登录时 303 跳登录页，2xx/3xx 都算健康」——
+这是拿「巧合」当契约。现在改为专用端点（`oekit/hertz/health`）：
+
+- `/pingz` —— **liveness**：只答 pong，**不碰任何依赖**。库短暂不可用时若拿它做 liveness，
+  k8s 会掉进「越重启越起不来」的死循环；
+- `/healthz` —— **readiness**：真去 ping 一次 SQLite（`store.Ping`，新增），
+  通不过就把流量摘走，不重启；
+- `/buildVersion` —— 版本信息，出问题时让用户贴这一行最省事。
+
+两个端口（ACS 与面板）**都注册**，探针配置因此不必猜端口；静态路径优先于
+`NewHertzEngine` 的 `/*any` 兜底，`TestHealthEndpoints_BeatCatchAll` 守着这条优先级。
+版本号经 `syncOekitVersion()` 与面板展示对齐（否则用户报障贴出来的是 `dev`）。
+
+**OEK-5 业务错误码（`oekit/pkg/errors.BizError`）。** 8xxx 号段
+（9xxx 留给 CPE→ACS 方向，见 §2.4 修正②）：`8000` 内部 / `8001` 请求不合法 /
+`8003` 未认证 / `8004` 不存在 / `8005` 能力不可用 / `8006` 持久化失败。
+错误体 `{"code": …, "error": …}` —— 新增 `code` 属**加法**，415 项 e2e 只做字段访问
+不做整对象比对，实测 415/0 不变。
+
+`APIError` 的底层换成 `*errors.BizError`（双轨），但**覆写了 `Error()`**：
+`BizError.Error()` 自带 `biz_code:8004 ` 前缀，直接透出会污染用户可见文案。
+外部仍可用 `errors.AsBizError` 统一取码。
+
+顺带补上一条漏网路径：面板 `/api` 的 401 此前是手写 `{"error":"需要登录"}`，
+不走统一 writer，漏了 `code`。是 `TestAPIError_UnauthCarriesCode` 把它揪出来的。
+
+**ontweb JSON 韧性（`oekit/pkg/jsonrepair`）。** 真机抓取的报文我们控制不了，
+厂商把 JSON 包在 markdown 代码围栏里、数组尾部多一个逗号都很常见 —— 以前整份作废。
+
+**边界要说清楚（实测过的）**：合法的走 stdlib 快路径成本不变；
+**截断的数组救不回来，仍然返回 nil** —— 宁可界面上「这次没采到」，
+也不能把解析了一半的数组当完整结果显示。`TestParseHostsJSON_TruncatedStaysNil`
+把这条钉住了（一开始误以为能修截断，实测不能，注释与测试都已按实测更正）。
+
+### 14.2 按规范执行后的反向修正
+
+| 原审计结论 | 复核后 | 理由 |
+| --- | --- | --- |
+| OEK-3「引入 gopool 做并发池」 | **半推翻**：闸用 channel 而非 gopool | `MaxIdleWorkers` 是「常驻上限，超出即用即走」，不是硬闸。已在 §13.4 记 |
+| 探活「拿面板首页当探针」 | **推翻**：补专用端点 | 巧合当契约，且与库健康耦合 |
+| `pkg` v0.7.0 | 升 **v0.9.0** | 新增 `jsonrepair`/`BizError` 都在这个版本区间 |
+
+### 14.3 有意不采纳（复核后维持）
+
+- **OEK-10 bootstrap 应用骨架**：llms.txt 已更新到 v0.4 的 `New(…) + b.Run(fn)` 形态，
+  `fn` 参数确实比旧版的 `Run(Config{...})` 更能容纳定制流程。但本仓的零断点重启
+  要在 `b.Run` **之前**完成 listener 句柄的父子交接与 pid 交接，这段逻辑挂在
+  bootstrap 的生命周期之外，套用只会多一层间接。维持不采纳。
+- **OEK-9 oekit/metrics**：`/metrics` 当前 5 个 gauge 手拼，能力不变、迁移不增能力。
+  等指标族真要长（直方图 / 每设备指标）再说。
+
+### 14.4 仍未采纳、值得后人有空再看
+
+- **OEK-8 logx 门面**：复核 v0.2.0，`slogLogger` 仍硬编码 JSON 输出、
+  `NewSlogLogger(service, level)` 不接受自定义 `slog.Handler`，
+  且 `SetDefault` 收的是 `logx.Logger` 接口而不是 `*slog.Logger`。
+  原提的 [oekit/logx#6](https://github.com/oekit/logx/issues/6) 依然成立。
+- **OEK-6 settings 缓存**：文档要求「先压测拿基线再决定」，压测仍未做。
+
+### 14.5 为什么仍然不整包切 logx 门面
+
+复核发现 logx v0.4.0 已经支持注入自有 Handler（见 14.1 与 OEK-8 行），
+所以「接 logx 会被迫换日志格式」这个理由**不再成立**。但不建议顺手把
+`*slog.Logger` 全量换成 `logx.Logger`，理由：
+
+- 本仓是**单二进制自部署的家用设备**，不是多租户微服务。logx 门面的价值主要在
+  多服务统一 sink / 跨服务 trace 串联，这里都不存在；
+- 全量替换要动 `internal/{cwmp,store,web,alert,ontweb,config}` 的每一个日志调用点，
+  改动面极大、回归风险高，而**可观测性没有实质增加**（没有第二个服务要串联）；
+- 真正缺的是 **trace_id**，那件事的正解是 `tracing/traceid` + `SetTraceExtractor`，
+  可以只加一个中间件，不动现有日志调用点。
+
+所以 OEK-8 收敛成一件事：**给一次设备上报串起 trace_id**，
+且明确「不为此换日志门面」。

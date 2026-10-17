@@ -204,6 +204,7 @@ CLI 一次性采集与服务端内建轮询（`-ontweb-url` 等配置）两条�
 | `-offline-probe-grace` | `ACS_OFFLINE_PROBE_GRACE` | `30s` | 最后一次探测后再等多久才判离线 |
 | `-offline-probe-max` | `ACS_OFFLINE_PROBE_MAX` | `0` | `周期×倍数` 的上限（`0` = 不设；设备上报的周期很大时用得上）|
 | `-offline-check-interval` | `ACS_OFFLINE_CHECK_INTERVAL` | `30s` | 后台多久巡检一次在线状态 |
+| `-probe-concurrency` | `ACS_PROBE_CONCURRENCY` | `20` | 离线探测**同时在飞**的 ConnectionRequest 上限；大批设备同时掉线时防止连接数失控 |
 | `-auto-fetch-wifi` | `ACS_AUTO_FETCH_WIFI` | `true` | 纳管时自动采集无线概况与主机列表 |
 | `-auto-refresh-wifi` | `ACS_AUTO_REFRESH_WIFI` | `10m` | 无线 / 终端概况的自动刷新间隔（面板上的「采集」时间跟着动；`0` = 只在首次纳管时采一次）|
 | `-probe-capabilities` | `ACS_PROBE_CAPABILITIES` | `true` | 纳管时做一次能力探测（决定界面区块）|
@@ -290,6 +291,23 @@ TransferComplete(CommandKey) 回报成败，任务历史可见；接受后 2 小
   看板不会引用不存在的指标。改过 token 记得重新下载。
 - 抓取端点默认是 `127.0.0.1:<面板端口>`；Prometheus 与面板不在同一台机器时，
   把监听地址改成可被 Prometheus 访问的网卡地址。
+
+### 探针端点（无需鉴权）
+
+三个端点在 **ACS 端口与面板端口都有**（双端口部署时不用猜该探哪个）：
+
+| 端点 | 用途 | 行为 |
+| --- | --- | --- |
+| `/pingz` | **存活**探针 | 只答 `pong`，**不碰任何依赖** |
+| `/healthz` | **就绪**探针 | 真去 ping 一次 SQLite；库写不进去就返回非 200 |
+| `/buildVersion` | 版本信息 | 编译版本与运行时长；报障时贴这一行最省事 |
+
+配容器/K8s 探针时注意分工：**liveness 用 `/pingz` 而不是 `/healthz`**。
+数据库短暂不可用是「摘流量」的事，不是「重启进程」的事 ——
+拿 `/healthz` 做 liveness 会掉进「越重启越起不来」的死循环。
+
+`deploy/k8s/statefulset.yaml` 与 `Dockerfile` 已按此配置（此前两者都是拿
+面板首页 `GET /` 当探针，靠「未登录时 303 跳登录页也算活」这种巧合）。
 
 ### 设备清单页（/inventory）
 
