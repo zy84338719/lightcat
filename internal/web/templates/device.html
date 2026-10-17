@@ -172,6 +172,16 @@
       <svg class="spark spark-rx" viewBox="0 0 600 120" preserveAspectRatio="none"
            role="img" aria-label="{{T "收光功率趋势"}}"><polyline points="{{.ChartRX}}"/></svg>
     </div>
+    {{else if .RxUnavailable}}
+    {{/* 没有收光趋势图时要说清是「设备/通道不支持」而不是「没数据」——
+         否则用户看着像收光正常，而收光过低告警其实永远不会触发。 */}}
+    <div class="chartbox">
+      <div class="chart-title">{{T "收光"}} <span class="hint">dBm</span></div>
+      <div class="empty">
+        <div class="empty-title">{{T "本采集通道不提供收光功率读数"}}</div>
+        <div class="empty-body">{{T "这不是采样失败：这台设备的采集通道压根没有收光参数，因此收光过低告警不会触发。需要 TR-069 纳管才能读到 RXPower。"}}</div>
+      </div>
+    </div>
     {{end}}
     {{if .ChartTX}}
     <div class="chartbox">

@@ -271,6 +271,31 @@ var migrations = []string{
 	// 为什么存库而不是只在日志里：日志会滚动，而「上报记录」是长期留痕的
 	// 面板页面；两者对不上时，以库里的这份为准去日志里查。
 	`ALTER TABLE informs ADD COLUMN trace_id TEXT NOT NULL DEFAULT ''`,
+	// 19：补齐 ontweb（光猫 Web 普通账号）通道产出的那一族光口参数。
+	//
+	// 为什么之前缺：迁移 #6 的种子是照 **TR-069 通道**在真机上对出来的
+	// （X_CU_WANEdgeONTPONInterfaceConfig.OpticalTransceiver.* 与
+	// X_GponInterafceConfig.*），而 ontweb 通道把光口信息页的读数写成
+	// TR-098 形状的 **X_HW_LANOpticInterfaceConfig.1.*** —— 那一族一条规则都没有。
+	// 后果：新装的机器纳管华为 V271-20 走 Web 通道时，收/发光/温度/电压/偏流
+	// 在参数驱动的视图（概览页、清单页）里全认不出来，只剩 optical_history 兜底。
+	// 现网的库是**手工**补过这 4 条的，所以只有新装机器受影响，更难被发现。
+	//
+	// 换算与真机页面一致（已在现网核对：7499 → -1.24997 dBm、31450 → 3.145 V、
+	// 13056 → 51.0 ℃、9500 → 19.0 mA）。
+	//
+	// 刻意**不加** rx_power：华为 V271-20 的 UserOpticInfo 只有 TX/电压/温度/偏流
+	// 四个原始值，固件不提供上行收光 —— 加一条永远命不中的规则只会让人以为
+	// 「配了就能读到」。收光缺失要显式告知（见 internal/web/optical.go
+	// 的 HostOptical.RxUnavailable）。
+	//
+	// INSERT OR IGNORE：现网已手工补过这 4 条，靠 UNIQUE(field, match_contains,
+	// match_suffix) 天然去重，老库不会重复插入。
+	`INSERT OR IGNORE INTO param_aliases (field, vendor, match_contains, match_suffix, decode, priority, note, updated_at) VALUES
+  ('tx_power',     'Huawei', 'x_hw_lanopticinterface', '.transceiverpower',    'dbm_01uw', 10, 'ontweb Web 通道光口页：7499 → -1.24997 dBm（与设备页面一致）', ''),
+  ('temperature',  'Huawei', 'x_hw_lanopticinterface', '.transceivertemperature', 'div256', 10, 'ontweb Web 通道光口页：13056 → 51.0 ℃', ''),
+  ('voltage',      'Huawei', 'x_hw_lanopticinterface', '.supplyvoltage',       'mv01',     10, 'ontweb Web 通道光口页：31450 → 3.145 V', ''),
+  ('bias_current', 'Huawei', 'x_hw_lanopticinterface', '.biascurrent',         'ua2',      10, 'ontweb Web 通道光口页：9500 → 19.0 mA', '')`,
 }
 
 // migrate 把库升到当前版本。幂等：已升过的直接跳过。

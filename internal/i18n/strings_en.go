@@ -338,6 +338,12 @@ func init() {
 		"参数条数":  "Parameters",
 		"重试":    "Retries",
 		"来源 IP": "Source IP",
+		// 收光读不到时区分「设备/通道不支持」与「这一轮没采到」——
+		// 混成一个 "-" 会被读成「收光正常」，而收光过低告警其实永远不触发。
+		"不支持": "n/a",
+		"本采集通道不提供收光功率读数": "This collection channel provides no RX power reading",
+		"本采集通道不提供收光功率读数（非采样失败）：收光过低告警在这台设备上不会触发":                           "This channel provides no RX power reading (not a sampling failure): the low-RX alert can never fire for this device",
+		"这不是采样失败：这台设备的采集通道压根没有收光参数，因此收光过低告警不会触发。需要 TR-069 纳管才能读到 RXPower。": "Not a sampling failure: this device's collection channel exposes no RX parameter at all, so the low-RX alert cannot fire. RXPower is only readable over TR-069.",
 		"trace": "trace",
 		// 上报记录里的 trace_id 列：点一下复制整条日志链的检索键
 		"点击复制": "Click to copy",

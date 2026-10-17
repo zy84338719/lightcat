@@ -116,7 +116,9 @@
         <td class="mono nowrap num">{{index $.ClientCounts $d.ID}}</td>
         {{if $.HasOptical}}
         {{$o := index $.Optical $d.ID}}
-        <td class="mono nowrap">{{if $o.Rx}}{{$o.Rx}}{{else}}<span class="hint">-</span>{{end}}</td>
+        {{/* 读不到 ≠ 正常：认得出 TX 却没认到任何 Rx 参数，说明这台设备的
+             采集通道根本不提供收光。裸 "-" 会被读成「收光正常」。 */}}
+        <td class="mono nowrap">{{if $o.Rx}}{{$o.Rx}}{{else if $o.RxUnavailable}}<span class="hint" title='{{T "本采集通道不提供收光功率读数（非采样失败）：收光过低告警在这台设备上不会触发"}}'>不支持</span>{{else}}<span class="hint">-</span>{{end}}</td>
         <td class="mono nowrap">{{if $o.Tx}}{{$o.Tx}}{{else}}<span class="hint">-</span>{{end}}</td>
         {{end}}
         <td class="nowrap">

@@ -92,7 +92,7 @@ type Options struct {
 //
 // 为什么要它：出问题时用户截图里带着版本号，比口头描述「我用的是最新版」
 // 可核对得多；升级前后也能一眼看出有没有换过。
-const Version = "1.5.1"
+const Version = "1.5.2"
 
 // RestartMode 说明这次重启是用哪种方式完成的 —— 影响界面上怎么告诉用户
 // 「接下来会发生什么」（systemd 拉起要等它几秒，自己起的新进程则是已经就绪）。
@@ -952,13 +952,16 @@ func (s *Server) handleDevice(w http.ResponseWriter, r *http.Request) {
 	devAlerts, _ := s.store.ListDeviceAlerts(id, 5)
 
 	data := map[string]any{
-		"Device":             d,
-		"TagsStr":            strings.Join(d.Tags, ", "),
-		"Section":            "devices",
-		"CanRefresh":         true,
-		"WebOnly":            webOnly,
-		"Alerts":             alertRows(devAlerts),
-		"ChartRX":            charts["rx"],
+		"Device":     d,
+		"TagsStr":    strings.Join(d.Tags, ", "),
+		"Section":    "devices",
+		"CanRefresh": true,
+		"WebOnly":    webOnly,
+		"Alerts":     alertRows(devAlerts),
+		"ChartRX":    charts["rx"],
+		// RxUnavailable：没有收光趋势图时，说明是「这台设备的采集通道没有收光参数」
+		// 而不是「没采到」。不传的话模板分不出这两者，只能把图整块藏掉。
+		"RxUnavailable":      hostOpticalFrom(aliases, params).RxUnavailable() && !histHasRx(optHist),
 		"ChartTX":            charts["tx"],
 		"ChartTemp":          charts["temp"],
 		"ChartN":             len(optHist),
@@ -1491,4 +1494,15 @@ func formatUptime(v string) string {
 	default:
 		return fmt.Sprintf("%d 分 %d 秒", m, sec%60)
 	}
+}
+
+// histHasRx 表示历史里出现过收光读数 —— 出现过就说明这条通道给过收光，
+// 「读不到」只是这一轮没采到，不该按能力缺失显示。
+func histHasRx(hist []store.OpticalSample) bool {
+	for _, s := range hist {
+		if s.RxDbm.Valid {
+			return true
+		}
+	}
+	return false
 }
