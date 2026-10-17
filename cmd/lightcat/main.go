@@ -139,6 +139,9 @@ func run(args []string) error {
 		return err
 	}
 	alert.WithBackground(alertMgr, bg)
+	// 推送重试的退避等待受进程 ctx 约束：SIGINT/SIGTERM 到达时正在退避的
+	// webhook 立刻收手，不会把关停窗口（5s）睡满。
+	alert.WithContext(alertMgr, ctx)
 
 	// ontweb 内建轮询（可选）：没有运营商超管时，服务端自己用光猫普通账号的
 	// Web 接口定时采集（internal/ontweb）。进程退出即停，无需单独的调度器。
