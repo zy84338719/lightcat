@@ -25,12 +25,12 @@ import (
 	"github.com/oekit/tracing/traceid"
 )
 
-// Header 是 trace_id 的 HTTP 头名。上游（WAF、反代、日志采集）带了它就沿用，
-// 没带才自己生成 —— 这样一次请求穿过多层代理时，trace_id 不会在每一层都变。
-const Header = "X-Trace-Id"
+// Header 是 trace_id 的 HTTP 头名。与上游常量同源，别自己再定义一份 ——
+// 定义两份迟早会漂移成「中间件写 X-Trace-Id、日志打 TraceID」这种查不出来的错。
+const Header = traceid.HeaderKey
 
 // Key 是日志字段名。
-const Key = "trace_id"
+const Key = traceid.Key
 
 // New 生成一个新的 trace_id。
 //
