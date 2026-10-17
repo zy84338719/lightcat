@@ -7,6 +7,35 @@ import (
 	"time"
 )
 
+// upsertParamSQL 是参数入库的 upsert 语句。
+//
+// 抽成常量有两个原因：一是长（带一串 CASE WHEN 注释），内联在函数里会让
+// UpsertParams 读起来像一坨；二是基准测试要单独量 Prepare 的成本（见
+// params_bench_test.go）。
+// upsertParamHead / upsertParamTail 把 upsert 语句拆成头尾两段，是为了多行插入能
+// 复用同一个 ON CONFLICT 子句（见 params_multirow_test.go 的原型与等价性测试）——
+// 两段放在一起拼成 upsertParamSQL，不会出现「改了一处忘了另一处」的漂移。
+const upsertParamHead = `INSERT INTO device_params
+		(device_id, name, value, value_type, writable, source, updated_at)
+		VALUES `
+
+const upsertParamTail = `		ON CONFLICT (device_id, name) DO UPDATE SET
+			-- 【重要】名字枚举（source='getnames'）本身**不带值**，所以它不能改动
+			-- value / value_type，也不该刷「采集时间」—— 它只是记录“这个参数存在、可不可写”。
+			-- 踩过的坑：浏览参数树（根级 GetParameterNames）把已有的参数值全刷成了空串，
+			-- 界面上设备详情页瞬间“没有数据了”，而设备那边其实一切正常。
+			value      = CASE WHEN excluded.source = 'getnames'
+			                  THEN device_params.value ELSE excluded.value END,
+			value_type = CASE WHEN excluded.source = 'getnames'
+			                  THEN device_params.value_type ELSE excluded.value_type END,
+			writable   = MAX(device_params.writable, excluded.writable),
+			source     = CASE WHEN excluded.source = 'getnames' AND device_params.source = 'getvalues'
+			                  THEN device_params.source ELSE excluded.source END,
+			updated_at = CASE WHEN excluded.source = 'getnames'
+			                  THEN device_params.updated_at ELSE excluded.updated_at END`
+
+const upsertParamSQL = upsertParamHead + "(?,?,?,?,?,?,?)" + upsertParamTail
+
 // Param 是设备上的一个参数节点。
 type Param struct {
 	Name      string
@@ -33,23 +62,7 @@ func (s *Store) UpsertParams(deviceID int64, params []Param, source string) erro
 	}
 	defer tx.Rollback()
 
-	stmt, err := tx.Prepare(`INSERT INTO device_params
-		(device_id, name, value, value_type, writable, source, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT (device_id, name) DO UPDATE SET
-			-- 【重要】名字枚举（source='getnames'）本身**不带值**，所以它不能改动
-			-- value / value_type，也不该刷「采集时间」—— 它只是记录“这个参数存在、可不可写”。
-			-- 踩过的坑：浏览参数树（根级 GetParameterNames）把已有的参数值全刷成了空串，
-			-- 界面上设备详情页瞬间“没有数据了”，而设备那边其实一切正常。
-			value      = CASE WHEN excluded.source = 'getnames'
-			                  THEN device_params.value ELSE excluded.value END,
-			value_type = CASE WHEN excluded.source = 'getnames'
-			                  THEN device_params.value_type ELSE excluded.value_type END,
-			writable   = MAX(device_params.writable, excluded.writable),
-			source     = CASE WHEN excluded.source = 'getnames' AND device_params.source = 'getvalues'
-			                  THEN device_params.source ELSE excluded.source END,
-			updated_at = CASE WHEN excluded.source = 'getnames'
-			                  THEN device_params.updated_at ELSE excluded.updated_at END`)
+	stmt, err := tx.Prepare(upsertParamSQL)
 	if err != nil {
 		return err
 	}
