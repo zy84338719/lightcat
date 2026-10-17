@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/oekit/pkg/errors"
 	"github.com/zy84338719/lightcat/internal/store"
 )
 
@@ -41,7 +42,7 @@ func ApplySnapshot(st *store.Store, snap *Snapshot, baseURL string) (int64, int,
 	}
 	id, _, err := st.UpsertDevice(dev)
 	if err != nil {
-		return 0, 0, fmt.Errorf("写设备失败: %w", err)
+		return 0, 0, errors.Wrap(err, "写设备失败")
 	}
 
 	root := dev.DataModelRoot
@@ -198,10 +199,10 @@ func ApplySnapshot(st *store.Store, snap *Snapshot, baseURL string) (int64, int,
 	}
 
 	if err := st.UpsertParams(id, params, "web"); err != nil {
-		return 0, 0, fmt.Errorf("写参数失败: %w", err)
+		return 0, 0, errors.Wrap(err, "写参数失败")
 	}
 	if err := ensureWebAliases(st); err != nil {
-		return 0, 0, fmt.Errorf("登记光口映射失败: %w", err)
+		return 0, 0, errors.Wrap(err, "登记光口映射失败")
 	}
 	if err := st.InsertInform(&store.InformRecord{
 		DeviceID:    id,
@@ -211,7 +212,7 @@ func ApplySnapshot(st *store.Store, snap *Snapshot, baseURL string) (int64, int,
 		SourceIP:    HostOf(baseURL),
 		ParamCount:  len(params),
 	}); err != nil {
-		return 0, 0, fmt.Errorf("写采集记录失败: %w", err)
+		return 0, 0, errors.Wrap(err, "写采集记录失败")
 	}
 
 	// 光功率历史：面板趋势图的数据源，换算与面板映射表同一套公式。

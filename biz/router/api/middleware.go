@@ -23,8 +23,9 @@ func rootMw() []app.HandlerFunc {
 // 未认证回 401 JSON —— 机器端点不跳登录页，抓取方不该拿到 HTML。
 func _apiMw() []app.HandlerFunc {
 	return []app.HandlerFunc{func(c context.Context, ctx *app.RequestContext) {
-		if api.Deps != nil &&
-			api.Deps.APIAuthOK(string(ctx.Cookie(web.PanelCookieName)), bearerOf(ctx)) {
+		// Deps() 是 atomic 读（OEK-7）：装配层注入后只读，这里无锁取用。
+		if d := api.Deps(); d != nil &&
+			d.APIAuthOK(string(ctx.Cookie(web.PanelCookieName)), bearerOf(ctx)) {
 			ctx.Next(c)
 			return
 		}

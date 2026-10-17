@@ -59,10 +59,11 @@ ENV ACS_DB=/data/lightcat.db \
 # 7547 = CWMP（设备侧；不设 ACS_WEB_LISTEN 时面板也在这个端口）；8080 = 面板（双端口部署时）
 EXPOSE 7547 8080
 
-# 健康检查打面板端口的 /（面板未登录时 303 到登录页，同样算活着）。
-# 注意：CWMP 专用端口对 GET 一律 405（协议只收 POST），**不能**用来做健康检查 ——
-# 双端口部署时把 LIGHTCAT_HEALTH_PORT 设成面板端口（compose 已代劳）。
+# 健康检查打专用端点 /healthz（会真 ping 一次 SQLite），不用面板首页：
+# 首页未登录时靠「303 跳登录页也算健康」这种巧合来判断，语义不对；
+# 而打 CWMP 路径在双端口部署下是 GET / → 405，容器会被一直判 unhealthy。
+# /healthz 在 ACS 与面板两个端口都有，所以单端口/双端口都不用改端口号。
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-    CMD wget -q -O /dev/null "http://127.0.0.1:${LIGHTCAT_HEALTH_PORT:-7547}/" || exit 1
+    CMD wget -q -O /dev/null "http://127.0.0.1:${LIGHTCAT_HEALTH_PORT:-7547}/healthz" || exit 1
 
 ENTRYPOINT ["/usr/local/bin/lightcat"]

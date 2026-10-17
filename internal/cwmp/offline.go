@@ -148,6 +148,58 @@ func (s *Server) offlinePolicyFor() offlinePolicy {
 	}
 }
 
+// startSweep 触发一轮离线巡检，但保证同一时刻只有一轮在飞。
+//
+// 为什么单独一个协程而不是在 janitor 循环里直接调：探测被闸限流后，
+// 大批设备同时掉线的一轮可能要跑很久（见 acquireProbeSlot）。同步调会把
+// 下面的诊断/下载超时收尾一起堵住；而不管的话下一轮 tick 又会叠上来，
+// 两轮巡检同时判同一台设备，探测计数会被记重。
+func (s *Server) startSweep(ctx context.Context) {
+	s.sweepMu.Lock()
+	if s.sweeping {
+		s.sweepMu.Unlock()
+		return
+	}
+	s.sweeping = true
+	s.sweepMu.Unlock()
+
+	s.goBg(func() {
+		defer func() {
+			s.sweepMu.Lock()
+			s.sweeping = false
+			s.sweepMu.Unlock()
+		}()
+		s.SweepOffline(ctx)
+	})
+}
+
+// acquireProbeSlot 占一个探测名额，返回释放函数。
+//
+// 取不到名额时按 ctx 等待而不是直接跳过：跳过一等于这轮不探测该设备，
+// 探测计数不前进，在大批设备同时掉线时要多等好几个 OfflineCheckInterval
+// 才可能凑够 OfflineProbeAttempts 判离线。阻塞取槽让吞吐维持在闸值上限，
+// 一轮的最坏时长有明确上界：ceil(待探设备数 / 闸值) × ConnReqTimeout。
+func (s *Server) acquireProbeSlot(ctx context.Context) (func(), error) {
+	select {
+	case s.probeGate <- struct{}{}:
+		var once bool
+		return func() {
+			if !once {
+				once = true
+				<-s.probeGate
+			}
+		}, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// CurrentGateUsage 返回当前被占用的探测名额数。
+//
+// 暴露出来有两个用处：/metrics 可以直接观测「并发闸有没有真的在限」，
+// 测试也能断言峰值而不必去数日志。
+func (s *Server) CurrentGateUsage() int { return len(s.probeGate) }
+
 // SweepOffline 巡检一遍所有设备的在线状态（后台定时跑，见 StartJanitor）。
 //
 // 返回本次探测了几台、判离线几台，便于日志与验收断言。
@@ -170,16 +222,31 @@ func (s *Server) SweepOffline(ctx context.Context) (probed, offlined int) {
 				s.log.Warn("离线巡检：清探测进度失败", "device_id", d.ID, "err", err)
 			}
 		case offlineProbe:
+			// 名额在**取用前**先占好（acquireProbeSlot），这才是并发上限的真正落点：
+			// 占到名额才派发，没占到就一直等 —— 全程任何时刻在飞的探测
+			// 都不超过 cfg.ProbeConcurrency 个连接。
+			release, err := s.acquireProbeSlot(ctx)
+			if err != nil {
+				return probed, offlined // ctx 取消，正常退出
+			}
 			// 探测本身也是「设备还活着」的最强证据：能连上就说明只是没按周期上报。
 			//
 			// 并发发出去：一台连不上的设备要等满 ConnReqTimeout（默认 10 秒），
 			// 一批设备同时掉线时串行探测会把整个巡检拖垮（下一次巡检的 tick 直接被丢掉）。
 			probed++
 			attempt := d.ProbeCount + 1
-			go func(dev *store.Device, attempt int, elapsed time.Duration) {
-				err := s.connectionRequest(dev)
+			elapsed := dec.Elapsed
+			dev := d
+			s.goBg(func() {
+				defer release()
+				err := s.connectionRequestCtx(ctx, dev)
 				at := time.Now()
 				if err != nil {
+					// 关停期被取消的不是探测失败，别记进设备状态（否则
+					// 正常 SIGTERM 会把全网设备都算成「探测无响应」）。
+					if ctx.Err() != nil {
+						return
+					}
 					if recordErr := s.store.RecordProbe(dev.ID, at); recordErr != nil {
 						s.log.Warn("离线巡检：记录探测次数失败", "device_id", dev.ID, "err", recordErr)
 					}
@@ -194,7 +261,7 @@ func (s *Server) SweepOffline(ctx context.Context) (probed, offlined int) {
 				s.log.Info("离线探测成功（设备还活着，只是没按周期上报）",
 					"device_id", dev.ID, "serial", dev.SerialNumber,
 					"elapsed", elapsed.Round(time.Second).String())
-			}(d, attempt, dec.Elapsed)
+			})
 		case offlineMark:
 			if err := s.store.MarkOffline(d.ID); err != nil {
 				s.log.Warn("离线巡检：标记离线失败", "device_id", d.ID, "err", err)

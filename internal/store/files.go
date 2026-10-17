@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/oekit/pkg/errors"
 )
 
 // 文件类型（TR-069 Download 的 FileType 按它映射，见 cwmp.FileTypeOf）。
@@ -46,7 +48,7 @@ func (s *Store) CreateFile(f *File) (int64, error) {
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		f.Name, f.FileType, f.URLPath, f.Size, f.SHA256, f.Version, f.Model, ts(f.CreatedAt))
 	if err != nil {
-		return 0, fmt.Errorf("登记文件失败: %w", err)
+		return 0, errors.Wrap(err, "登记文件失败")
 	}
 	if f.ID, err = res.LastInsertId(); err != nil {
 		return 0, err

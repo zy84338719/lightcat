@@ -9,10 +9,9 @@ import (
 	"crypto/subtle"
 	"embed"
 	"encoding/json"
-	"errors"
+	stderrors "errors"
 	"fmt"
 	"html/template"
-	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -20,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/oekit/pkg/errors"
 	"github.com/zy84338719/lightcat/internal/i18n"
 	"github.com/zy84338719/lightcat/internal/store"
 )
@@ -74,7 +74,9 @@ type Options struct {
 	Auth *Creds
 	// Runtime 是**当前进程实际在用**的监听/账号值：设置页拿它跟“保存后使用”的值对照。
 	Runtime RuntimeSettings
-	// Log 用来记面板登录等安全事件（nil = 不记）。
+	// Log 用来记面板登录等安全事件（nil = 用 slog.Default()）。
+	// 注意不是「nil = 不记」：Server 上的任何 s.log 调用都是无判空的，
+	// 留 nil 等于埋一个只在特定路径上才触发的 nil 解引用崩溃。
 	Log *slog.Logger
 	// Restart 由 cmd/lightcat 注入：让面板上「立即重启服务」能真把服务重启起来。
 	// nil = 没有这个能力（比如测试里），界面上会退回「自己去命令行重启」的说法。
@@ -126,11 +128,16 @@ func Register(mux *http.ServeMux, st *store.Store, ctrl Controller, opt Options)
 			},
 		}).ParseFS(assets, "templates/*.html")
 		if err != nil {
-			return nil, fmt.Errorf("解析模板失败（%s）: %w", l, err)
+			return nil, errors.Wrap(err, fmt.Sprintf("解析模板失败（%s）", l))
 		}
 		tpls[l] = tpl
 	}
 
+	// 兜底一个 logger：Server 上的 s.log.* 调用都不判空，留 nil 会在某个
+	// 日志路径上变成 nil 解引用崩溃（单测只传 Options{} 时最容易踩到）。
+	if opt.Log == nil {
+		opt.Log = slog.Default()
+	}
 	s := &Server{store: st, ctrl: ctrl, tpls: tpls, opt: opt, log: opt.Log}
 
 	// 面板这一套路由统一走鉴权（CWMP 那套在 main 里单独挂，不受影响）。
@@ -184,18 +191,11 @@ func Register(mux *http.ServeMux, st *store.Store, ctrl Controller, opt Options)
 	mux.HandleFunc("POST /logout", s.handleLogout)
 	mux.HandleFunc("GET /logout", s.handleLogout)
 
-	sub, err := fs.Sub(assets, "static")
-	if err != nil {
-		return nil, err
-	}
-	// 静态资源不鉴权：登录页本身要用 style.css，而且里面没有业务数据。
-	// 静态资源带 no-cache：每次回源确认。没做指纹/ETag 的话它等于每次重新拿，
-	// 好处是改了 app.js / style.css 之后刷新就能用上，不会拿着旧脚本跑。
-	fsHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", "no-cache")
-		http.StripPrefix("/static/", http.FileServerFS(sub)).ServeHTTP(w, r)
-	})
-	mux.Handle("GET /static/", fsHandler)
+	// 静态资源**不在这里挂**：它已经改成 Hertz 原生路由（见 static.go 的
+	// RegisterStaticRoutes），压得住 NewHertzEngine 的 "/*any" 兜底。
+	// 这里保留一条兜底会让「原生路由没注册」这种错配悄悄变成「还能用」，
+	// 正好丢掉 static_test.go 里那条反向验证；静态资源也不鉴权（登录页本身
+	// 要用 style.css，而且里面没有业务数据），所以兜底不给它补鉴权。
 	// 页面用 data-URI 图标，但浏览器仍会惯例性探测 /favicon.ico：给它同一个 SVG，
 	// 免得每次都落进样式化 404 + WARN 日志噪音
 	mux.HandleFunc("GET /favicon.ico", func(w http.ResponseWriter, r *http.Request) {
@@ -355,7 +355,7 @@ func sessionCookieOf(r *http.Request) string {
 func writeJSONUnauthorized(w http.ResponseWriter, msg string) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusUnauthorized)
-	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
+	_ = json.NewEncoder(w).Encode(map[string]any{"code": CodeUnauthorized, "error": msg})
 }
 
 // renderStatus 同 renderLang，但可以指定 HTTP 状态码（登录失败要回 401）。
@@ -1001,8 +1001,14 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	// 入队失败要**带反馈**（OEK-4）：以前这里 `_ =` 吞掉后照样跳"成功"，
+	// 设备不存在 / 库在关停期时，运维点「刷新」看着像生效了，其实什么都没下发。
 	if s.ctrl != nil {
-		_ = s.ctrl.RequestRefresh(id)
+		if err := s.ctrl.RequestRefresh(id); err != nil {
+			s.log.Warn("手动刷新设备信息失败", "device_id", id, "err", err)
+			redirectDeviceNotice(w, r, id, "刷新请求没能入队："+err.Error(), true)
+			return
+		}
 	}
 	http.Redirect(w, r, "/devices/"+strconv.FormatInt(id, 10), http.StatusSeeOther)
 }
@@ -1153,7 +1159,11 @@ func (s *Server) handleWifi(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.ctrl != nil {
-		_ = s.ctrl.FetchWiFi(id)
+		if err := s.ctrl.FetchWiFi(id); err != nil {
+			s.log.Warn("无线概况重新采集失败", "device_id", id, "err", err)
+			redirectDeviceNotice(w, r, id, "采集请求没能入队："+err.Error(), true)
+			return
+		}
 	}
 	http.Redirect(w, r, "/devices/"+strconv.FormatInt(id, 10), http.StatusSeeOther)
 }
@@ -1186,7 +1196,11 @@ func (s *Server) handleFetch(w http.ResponseWriter, r *http.Request) {
 		max = n
 	}
 	if path != "" && s.ctrl != nil {
-		_ = s.ctrl.FetchSubtree(id, path, exclude, max)
+		if err := s.ctrl.FetchSubtree(id, path, exclude, max); err != nil {
+			s.log.Warn("读取参数子树失败", "device_id", id, "path", path, "err", err)
+			redirectDeviceNotice(w, r, id, "读取请求没能入队："+err.Error(), true)
+			return
+		}
 	}
 	http.Redirect(w, r, "/devices/"+strconv.FormatInt(id, 10), http.StatusSeeOther)
 }
@@ -1294,24 +1308,36 @@ func constantTimeEq(a, b string) bool {
 }
 
 // writeJSONOrError 把服务层的 (payload, error) 翻译成 net/http 响应：
-// APIError 带状态码，其余错误一律 500。
+// APIError 带状态码与业务码，其余错误一律 500。
 func writeJSONOrError(w http.ResponseWriter, payload any, err error) {
 	if err != nil {
 		var ae *APIError
-		if errors.As(err, &ae) {
-			writeJSONError(w, ae.Err, ae.Status)
+		if stderrors.As(err, &ae) {
+			writeJSONErrorCode(w, ae.Err, ae.Status, ae.Code)
 			return
 		}
-		writeJSONError(w, err, http.StatusInternalServerError)
+		writeJSONErrorCode(w, err, http.StatusInternalServerError, CodeInternal)
 		return
 	}
 	writeJSON(w, payload)
 }
 
-func writeJSONError(w http.ResponseWriter, err error, code int) {
+// writeJSONError 是最常见的「未知错误」出口：状态 500 + CodeInternal。
+func writeJSONError(w http.ResponseWriter, err error, status int) {
+	writeJSONErrorCode(w, err, status, codeForStatus(status))
+}
+
+// writeJSONErrorCode 写 JSON 错误体：{"code": <业务码>, "error": "<文案>"}。
+//
+// code 是给机器分支用的稳定契约，error 是给人看的文案（会改、会本地化，
+// 不该被拿来当契约）。新增 code 字段属于**加法**，既有只读 error 的调用方不受影响。
+func writeJSONErrorCode(w http.ResponseWriter, err error, status, bizCode int) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"code":  bizCode,
+		"error": err.Error(),
+	})
 }
 
 // basicInfo 组装详情页顶部「最基本的设备信息」。

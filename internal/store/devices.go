@@ -2,10 +2,12 @@ package store
 
 import (
 	"database/sql"
-	"errors"
+	stderrors "errors"
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/oekit/pkg/errors"
 )
 
 // Device 是纳管的一台 CPE。
@@ -101,13 +103,13 @@ func (s *Store) UpsertDevice(in *Device) (int64, bool, error) {
 		in.OUI, in.ProductClass, in.SerialNumber).Scan(&id)
 
 	switch {
-	case errors.Is(err, sql.ErrNoRows):
+	case stderrors.Is(err, sql.ErrNoRows):
 		res, ierr := s.db.Exec(`INSERT INTO devices
 			(oui, product_class, serial_number, first_seen_at, last_inform_at, online)
 			VALUES (?, ?, ?, ?, ?, 1)`,
 			in.OUI, in.ProductClass, in.SerialNumber, ts(now), ts(now))
 		if ierr != nil {
-			return 0, false, fmt.Errorf("新增设备失败: %w", ierr)
+			return 0, false, errors.Wrap(ierr, "新增设备失败")
 		}
 		if id, ierr = res.LastInsertId(); ierr != nil {
 			return 0, false, ierr
@@ -165,7 +167,7 @@ func (s *Store) UpsertDevice(in *Device) (int64, bool, error) {
 		cur.ConnRequestURL, cur.PeriodicInterval, cur.UserAgent, cur.SourceIP,
 		cur.LastEvents, ts(cur.LastInformAt), ts(cur.LastBootAt), id)
 	if err != nil {
-		return 0, false, fmt.Errorf("更新设备失败: %w", err)
+		return 0, false, errors.Wrap(err, "更新设备失败")
 	}
 	return id, created, nil
 }

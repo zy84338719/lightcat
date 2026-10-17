@@ -65,18 +65,23 @@ spec:
               containerPort: 7547
             - name: panel
               containerPort: 8080
-          # 探针打面板端口的 /：未登录时 303 跳登录页，2xx/3xx 都算健康。
-          # 不能探 CWMP 端口——它对 GET 一律 405（协议只收 POST）。
+          # 探针用专用端点，不打面板首页：
+          #   - startup  /pingz   只证明进程起来了（冷启动迁移大库最多给 60 秒）
+          #   - readiness /healthz 会真 ping 一次 SQLite —— 库写不进去就不导流量
+          #   - liveness  /pingz  **不能**用 /healthz：库短暂不可用时若把容器重启掉，
+          #                     会掉进「越重启越起不来」的死循环
+          # 端点在 ACS 与面板两个端口都有，不用来路探针；且都不需要登录态。
+          # 不能探 CWMP 的 POST 路径（协议只收 POST）。
           startupProbe:
-            httpGet: { path: /, port: panel }
+            httpGet: { path: /pingz, port: panel }
             periodSeconds: 2
             failureThreshold: 30          # 冷启动迁移大库最多给 60 秒
           readinessProbe:
-            httpGet: { path: /, port: panel }
+            httpGet: { path: /healthz, port: panel }
             periodSeconds: 10
             timeoutSeconds: 3
           livenessProbe:
-            httpGet: { path: /, port: panel }
+            httpGet: { path: /pingz, port: panel }
             periodSeconds: 20
             timeoutSeconds: 3
             failureThreshold: 3

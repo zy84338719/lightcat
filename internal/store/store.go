@@ -5,17 +5,28 @@
 package store
 
 import (
+	"context"
 	"database/sql"
-	"errors"
+	stderrors "errors"
 	"fmt"
+	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/oekit/pkg/errors"
 	_ "modernc.org/sqlite"
 )
 
 // Store 包住 *sql.DB。
 type Store struct {
 	db *sql.DB
+
+	// 关停护栏（见 Close）：closeOnce 保证幂等，closed 让后台协程能在写库前
+	// 自我判断「库已经关了，这次写就别做了」，closed 先于 db.Close 落位，
+	// 让关停窗口期进来的写尽量早点折返而不是排队等一次必然失败的 IO。
+	closeOnce sync.Once
+	closeErr  error
+	closed    atomic.Bool
 
 	// taskHistoryLimit / informHistoryLimit 是「每台设备保留多少条历史记录」（0 = 不限）。
 	// 设成字段而不是常量：由配置决定，测试里也要能调小。
@@ -259,14 +270,14 @@ var migrations = []string{
 func (s *Store) migrate() error {
 	var v int
 	if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&v); err != nil {
-		return fmt.Errorf("读取数据库版本失败: %w", err)
+		return errors.Wrap(err, "读取数据库版本失败")
 	}
 	if v > len(migrations) {
 		return fmt.Errorf("数据库版本 %d 高于本程序支持的 %d，请升级程序", v, len(migrations))
 	}
 	for i := v; i < len(migrations); i++ {
 		if _, err := s.db.Exec(migrations[i]); err != nil {
-			return fmt.Errorf("数据库迁移 #%d 失败: %w", i+1, err)
+			return errors.Wrap(err, fmt.Sprintf("数据库迁移 #%d 失败", i+1))
 		}
 		if _, err := s.db.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, i+1)); err != nil {
 			return err
@@ -279,7 +290,7 @@ func (s *Store) migrate() error {
 func (s *Store) GetSetting(k string) (string, bool, error) {
 	var v string
 	err := s.db.QueryRow(`SELECT v FROM settings WHERE k = ?`, k).Scan(&v)
-	if errors.Is(err, sql.ErrNoRows) {
+	if stderrors.Is(err, sql.ErrNoRows) {
 		return "", false, nil
 	}
 	if err != nil {
@@ -317,7 +328,7 @@ func Open(path string) (*Store, error) {
 
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
-		return nil, fmt.Errorf("打开数据库失败: %w", err)
+		return nil, errors.Wrap(err, "打开数据库失败")
 	}
 	// 轻量场景下最省心的做法：串行化访问，彻底避开 SQLITE_BUSY。
 	// 设备规模上来后可以放宽并配合写队列，见 NFR-3。
@@ -326,13 +337,13 @@ func Open(path string) (*Store, error) {
 
 	if err := db.Ping(); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("连接数据库失败: %w", err)
+		return nil, errors.Wrap(err, "连接数据库失败")
 	}
 
 	s := &Store{db: db}
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("建表失败: %w", err)
+		return nil, errors.Wrap(err, "建表失败")
 	}
 	if err := s.migrate(); err != nil {
 		db.Close()
@@ -341,8 +352,45 @@ func Open(path string) (*Store, error) {
 	return s, nil
 }
 
-// Close 关闭数据库。
-func (s *Store) Close() error { return s.db.Close() }
+// ErrClosed 是库已关闭后的统一错误。
+//
+// 关停竞态的兜底（配合 OEK-2 的「先排空后台协程、再关库」顺序）：
+// 即便顺序对，后台回调里漏网的写也会撞上已关闭的库。让调用方能 errors.Is
+// 识别出「这只是关停期的正常收尾」，而不是把它当成真故障上报。
+var ErrClosed = stderrors.New("store: 已关闭")
+
+// Close 关闭数据库，**幂等**（sync.Once，重复调用返回同个结果，不报错）。
+//
+// 为什么幂等：关停路径上关库可能被两条路径触发（正常 SIGTERM 与
+// 面板「立即重启服务」），而 *sql.DB.Close 本身对第二次调用直接返回
+// sql.ErrConnDone —— 那是个无信息量的假故障，会把真问题淹没在日志里。
+//
+// 签名保持 Close() error 而非 oekit 规范的 Close(ctx) error：
+// *sql.DB 没有 ctx 语义的关闭动作（ctx 在该层用于「取消在飞的查询」，
+// 而 database/sql 自 Go 1.9 起就由 ctx 管查询取消，不归 Close），
+// 这里照抄 ctx 参数只会得到一个恒为 nil 的 context，是个假接口。
+func (s *Store) Close() error {
+	s.closeOnce.Do(func() {
+		s.closed.Store(true)
+		s.closeErr = s.db.Close()
+	})
+	return s.closeErr
+}
+
+// Closed 报告库是否已关闭。关停流程用它判断后台协程是否还可能写库。
+func (s *Store) Closed() bool { return s.closed.Load() }
+
+// Ping 探活：给 /healthz 这类就绪探针用。
+//
+// 为什么单独给一个方法而不是把 *sql.DB 暴露出去：sql.DB 是并发安全的，
+// 但把连接池交出去就等于把「能不能改 MaxOpenConns / 换驱动」也一并交出去了。
+// 对外只给「还能不能读写」这一个问句，实现换了也不影响调用方。
+func (s *Store) Ping(ctx context.Context) error {
+	if s.closed.Load() {
+		return ErrClosed
+	}
+	return s.db.PingContext(ctx)
+}
 
 // ---------- 时间与统计工具 ----------
 

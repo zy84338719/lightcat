@@ -20,6 +20,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/oekit/concurrency/async"
+	"github.com/oekit/concurrency/gopool"
+	"github.com/oekit/pkg/errors"
+
 	"github.com/zy84338719/lightcat/internal/store"
 )
 
@@ -162,6 +166,15 @@ type Config struct {
 	OfflineProbeMax      time.Duration
 	OfflineCheckInterval time.Duration
 
+	// ProbeConcurrency 是离线探测同时在飞的 ConnectionRequest 上限（<=0 取 20）。
+	//
+	// 为什么要有上限（NFR-3 的 1000+ 设备场景）：一批设备同时掉线时，
+	// 每台待探设备都要独立等满 ConnReqTimeout（默认 10 秒）。不设上限就是
+	// 1000 台 = 1000 个并发连接 —— 轻则本机 fd 与 ephemeral port 被吃光、
+	// SQLite 写入排队，重则把 CGNAT 后面的设备和运营商侧一起顶住。
+	// 这里用闸（buffered channel）做硬上限，不靠"起个池子大概限制一下"。
+	ProbeConcurrency int
+
 	// 主时唤醒（Connection Request）：给设备发一个 HTTP GET，让它立刻回连开一次会话，
 	// 于是排队的任务不用等下一次周期上报。
 	//
@@ -206,6 +219,18 @@ type Server struct {
 	// OnDeviceOffline 在设备被判定离线的那一刻调用（告警用）。同样要求轻量，
 	// panic 会被兜住。nil = 不关心。
 	OnDeviceOffline func(deviceID int64)
+
+	// bg 是后台任务的提交口。main 接一个进程级 gopool 并在关库前排空（OEK-2）；
+	// nil 时退回 async.GoSafe，所以单测和库内调用方不必接线。
+	bg *gopool.Pool
+
+	// probeGate 是离线探测的并发闸（容量 = cfg.ProbeConcurrency，见 Config 说明）。
+	probeGate chan struct{}
+
+	// sweepMu / sweeping 保证同一时刻只有一轮 SweepOffline 在飞。
+	// 探测被闸限流后一轮可能跑很久，不能让下一次 tick 叠上来。
+	sweepMu  sync.Mutex
+	sweeping bool
 }
 
 // NewServer 构造 CWMP 服务端。
@@ -237,18 +262,40 @@ func NewServer(st *store.Store, cfg Config, log *slog.Logger) *Server {
 	if cfg.OfflineAfter <= 0 {
 		cfg.OfflineAfter = 10 * time.Minute
 	}
+	if cfg.ProbeConcurrency <= 0 {
+		cfg.ProbeConcurrency = 20
+	}
 	return &Server{
-		store: st,
-		cfg:   cfg,
-		log:   log,
-		sess:  newSessionManager(cfg.SessionTimeout),
+		store:     st,
+		cfg:       cfg,
+		log:       log,
+		sess:      newSessionManager(cfg.SessionTimeout),
+		probeGate: make(chan struct{}, cfg.ProbeConcurrency),
 	}
 }
 
-// StartJanitor 起后台清理：超时会话、离线判定。
+// WithBackground 让 Server 把后台任务交给进程级协程池。
+//
+// 关停契约（OEK-2）：main 在关掉 store **之前**先 pool.Close(ctx) 排空，
+// 于是所有还在写库的协程都已经收工，不再出现「探测结果打在已关闭的库上」。
+// 不设置时退回 async.GoSafe —— 各自为政的协程没人能等，只能各写各的 recover。
+func WithBackground(s *Server, bg *gopool.Pool) { s.bg = bg }
+
+// goBg 提交后台任务：有池走池（可排空），没有就退回 async.GoSafe。
+func (s *Server) goBg(f func()) {
+	if s.bg != nil {
+		s.bg.Go(f)
+		return
+	}
+	async.GoSafe(f)
+}
+
+// StartJanitor 起后台清理：超时会话、离线巡检。协程经 goBg 提交
+// （有进程级池时走池、可在关停前排空；否则退回 async.GoSafe 兜 panic）：
+// 巡检挂了不该把整个 ACS 进程带走（重启任务没人清，设备离线永远没人判）。
 func (s *Server) StartJanitor(ctx context.Context) {
-	go s.sess.janitor(ctx, 30*time.Second)
-	go func() {
+	s.goBg(func() { s.sess.janitor(ctx, 30*time.Second) })
+	s.goBg(func() {
 		t := time.NewTicker(s.cfg.OfflineCheckInterval)
 		defer t.Stop()
 		for {
@@ -258,7 +305,7 @@ func (s *Server) StartJanitor(ctx context.Context) {
 			case <-t.C:
 				// 在线状态：按设备自己上报的周期判定，超期先主动探测几次，
 				// 还是没回音才标离线（规则与边界见 offline.go）
-				s.SweepOffline(ctx)
+				s.startSweep(ctx)
 				// 诊断收尾：设备不支持 ping、或者干脆没回报时，
 				// 不能让任务永远挂着 running。
 				if n, err := s.store.FailStaleTasks(TaskDiagnostics, 5*time.Minute,
@@ -273,7 +320,7 @@ func (s *Server) StartJanitor(ctx context.Context) {
 				}
 			}
 		}
-	}()
+	})
 }
 
 // RequestRefresh 给外部（Web/REST）用：让某台设备重新上报基本信息。
@@ -610,7 +657,7 @@ func (s *Server) EnqueueReboot(deviceID int64) (int64, error) {
 func (s *Server) EnqueueDownload(deviceID, fileID int64, delaySeconds int, urlBase string) (int64, error) {
 	f, err := s.store.GetFile(fileID)
 	if err != nil {
-		return 0, fmt.Errorf("文件不存在: %w", err)
+		return 0, errors.Wrap(err, "文件不存在")
 	}
 	if open, err := s.store.FindOpenTask(deviceID, TaskDownload); err == nil && open != nil {
 		return 0, fmt.Errorf("已经有一条下载任务在排队或进行中（任务 #%d），不重复下发", open.ID)
@@ -1228,8 +1275,10 @@ func (s *Server) onInform(w http.ResponseWriter, r *http.Request, sess *Session,
 			"device_id", deviceID, "names", typos)
 	}
 
-	// 事件流水
-	_ = s.store.InsertInform(&store.InformRecord{
+	// 事件流水。落库失败不影响本次 Inform 的处理结果（参数已经存好了），
+	// 但必须留痕（OEK-4）：以前 `_ =` 直接吞掉，面板上「上报记录」少一条却
+	// 没人知道原因，只会觉得"设备明明报过"。
+	if err := s.store.InsertInform(&store.InformRecord{
 		DeviceID:    deviceID,
 		Events:      strings.Join(inf.EventCodes(), ", "),
 		CommandKey:  inf.CommandKeyOfEvent("7 TRANSFER COMPLETE"),
@@ -1237,7 +1286,10 @@ func (s *Server) onInform(w http.ResponseWriter, r *http.Request, sess *Session,
 		CurrentTime: inf.CurrentTime,
 		SourceIP:    clientIP(r),
 		ParamCount:  len(inf.Params),
-	})
+	}); err != nil {
+		s.log.Warn("Inform 事件流水落库失败（面板「上报记录」会缺这一条）",
+			"device_id", deviceID, "serial", dev.SerialNumber, "err", err)
+	}
 
 	s.log.Info("收到 Inform",
 		"device_id", deviceID,
@@ -2386,14 +2438,14 @@ func readBody(r *http.Request, max int64) ([]byte, error) {
 	case "gzip":
 		gz, err := gzip.NewReader(r.Body)
 		if err != nil {
-			return nil, fmt.Errorf("解压 gzip 失败: %w", err)
+			return nil, errors.Wrap(err, "解压 gzip 失败")
 		}
 		defer gz.Close()
 		rd = gz
 	case "deflate":
 		zr, err := zlib.NewReader(r.Body)
 		if err != nil {
-			return nil, fmt.Errorf("解压 deflate 失败: %w", err)
+			return nil, errors.Wrap(err, "解压 deflate 失败")
 		}
 		defer zr.Close()
 		rd = zr

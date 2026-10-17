@@ -3,12 +3,15 @@ package web
 import (
 	"encoding/csv"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/oekit/pkg/errors"
 
 	"github.com/zy84338719/lightcat/internal/store"
 )
@@ -21,22 +24,88 @@ import (
 // 壳只负责「解析请求 → 调这里 → 按自己的协议写回」，JSON 形状与状态码口径
 // 由 415 项 e2e 断言钉死，任何一边都不许私自改。
 
-// APIError 带 HTTP 状态码的错误：服务层不碰任何写侧，
+// ACS 侧业务错误码（8xxx 段）。
+//
+// 编号约定来自 requirements §2.4 修正②：**8xxx 是 ACS 自己产生的错误码，
+// 9xxx 留给 CPE→ACS 方向**（设备报上来的错误码），两边不共用号段，
+// 所以看一个码就知道是谁说的。
+//
+// 为什么光有 HTTP 状态码不够：脚本轮询 /api 时，500 可能是「库写不进去」
+// 也可能是「这台设备正在被改」；400 可能是「ID 格式错」也可能是「body 不是 JSON」。
+// 状态码只能表达大类，抓取方没法据此分支，只能去 match 错误文案 —— 文案会改、会本地化，
+// 拿来当接口契约必然烂掉。code 是稳定契约，error 文案不是。
+const (
+	CodeInternal      = 8000 // 内部错误（未归类；含库写不进去等）
+	CodeBadRequest    = 8001 // 请求不合法：设备 ID 格式错、body 不是 JSON、必填参数为空
+	CodeUnauthorized  = 8003 // 缺少或无效的凭据
+	CodeNotFound      = 8004 // 目标不存在（设备不存在 / 端点不存在）
+	CodeUnavailable   = 8005 // 该能力当前不可用（如未接入控制接口）
+	CodeInternalWrite = 8006 // 持久化失败（写库/读库报错）
+)
+
+// APIError 带 HTTP 状态码 + ACS 业务码的错误：服务层不碰任何写侧，
 // 错误与状态一起返回，两个壳各自翻译成本协议的错误格式。
+//
+// 底层是 oekit 的 BizError（业务码 + HTTP 码双轨），但这里覆写了 Error()
+// 只回消息文本 —— 否则 BizError.Error() 会带上 "biz_code:8004 " 前缀，
+// 直接暴到用户可见的 {"error": "..."} 里，既难看又会随文案漂移。
 type APIError struct {
 	Status int
-	Err    error
+	Code   int
+	Err    *errors.BizError
 }
 
-func (e *APIError) Error() string { return e.Err.Error() }
+func (e *APIError) Error() string { return e.Err.Message }
 
-// apiErr 造一个带 HTTP 状态码的错误。
+// codeForStatus 是状态码 → 业务码的默认映射。
 //
-// 注意用 %v 而不是 %w：APIError.Err 只是给人看的**消息文本** —— 两个壳最终都把它
-// 拼成 {"error": "..."} 返回，没有任何地方对它做 errors.Is/As，包装链是死代码。
-// 用 %w 只会让人误以为这里存在可追溯的错误链。
+// 只覆盖真正有语义的几个：能一一对应的直接给专属码，
+// 其余（405/429 等本项目 API 不会产生的）都归到通用档，
+// 宁可粗一点也不要编出一堆从没出现过的码 —— 那会让号段失去信号。
+func codeForStatus(status int) int {
+	switch status {
+	case http.StatusBadRequest:
+		return CodeBadRequest
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return CodeUnauthorized
+	case http.StatusNotFound:
+		return CodeNotFound
+	default:
+		return CodeInternal
+	}
+}
+
+// apiErr 造一个带 HTTP 状态码的错误，业务码按状态码取默认值。
 func apiErr(status int, format string, args ...any) *APIError {
-	return &APIError{Status: status, Err: fmt.Errorf(format, args...)}
+	return apiErrCode(codeForStatus(status), status, format, args...)
+}
+
+// apiErrCode 显式指定业务码造错误。
+//
+// 状态码说「大概是什么问题」，业务码说「确切是什么问题」：两者分开才能
+// 在不改 HTTP 语义的前提下细分（比如 500 里区分「库挂了」与「能力不可用」）。
+func apiErrCode(code, status int, format string, args ...any) *APIError {
+	return &APIError{
+		Status: status,
+		Code:   code,
+		Err:    errors.NewBizErrorWithStatus(code, status, fmt.Sprintf(format, args...)),
+	}
+}
+
+// bizCodeOf 取任意错误上的 ACS 业务码；不是业务错误时返回 0。
+//
+// 给调用方（抓取器、中间件、日志）一个统一的读法，
+// 不用先 errors.As 成 APIError 再看字段。
+func bizCodeOf(err error) int {
+	var ae *APIError
+	if stderrors.As(err, &ae) {
+		return ae.Code
+	}
+	var be *errors.BizError
+	if stderrors.As(err, &be) {
+		return be.BizCode
+	}
+	return 0
 }
 
 // fmtNull 把可空读数格式化成 CSV 单元格（NULL = 空，不编数）。
@@ -153,7 +222,7 @@ func (s *Server) APIFetch(id int64, body io.Reader) (any, error) {
 		return nil, apiErr(http.StatusBadRequest, "path 不能为空")
 	}
 	if s.ctrl == nil {
-		return nil, apiErr(http.StatusInternalServerError, "未接入控制接口")
+		return nil, apiErrCode(CodeUnavailable, http.StatusInternalServerError, "未接入控制接口")
 	}
 	if err := s.ctrl.FetchSubtree(id, req.Path, req.Exclude, req.Max); err != nil {
 		return nil, apiErr(http.StatusInternalServerError, "%v", err)
@@ -180,7 +249,7 @@ func (s *Server) APIFetchNames(id int64, body io.Reader) (any, error) {
 		return nil, apiErr(http.StatusBadRequest, "path 不能为空")
 	}
 	if s.ctrl == nil {
-		return nil, apiErr(http.StatusInternalServerError, "未接入控制接口")
+		return nil, apiErrCode(CodeUnavailable, http.StatusInternalServerError, "未接入控制接口")
 	}
 	if err := s.ctrl.FetchNames(id, req.Path, req.NextLevel); err != nil {
 		return nil, apiErr(http.StatusInternalServerError, "%v", err)
@@ -196,7 +265,7 @@ func (s *Server) APIFetchNames(id int64, body io.Reader) (any, error) {
 // APIWifi 入队「采集无线概况」。
 func (s *Server) APIWifi(id int64) (any, error) {
 	if s.ctrl == nil {
-		return nil, apiErr(http.StatusInternalServerError, "未接入控制接口")
+		return nil, apiErrCode(CodeUnavailable, http.StatusInternalServerError, "未接入控制接口")
 	}
 	if err := s.ctrl.FetchWiFi(id); err != nil {
 		return nil, apiErr(http.StatusInternalServerError, "%v", err)

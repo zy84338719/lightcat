@@ -2,8 +2,9 @@ package store
 
 import (
 	"database/sql"
-	"fmt"
 	"time"
+
+	"github.com/oekit/pkg/errors"
 )
 
 // Alert 是一条告警记录（阈值触发或设备离线时写入，见 internal/alert）。
@@ -37,7 +38,7 @@ func (s *Store) InsertAlert(a *Alert) error {
 		a.DeviceID, a.Kind, a.Message, nullFloat64(a.Value), nullFloat64(a.Threshold),
 		boolInt(a.Notified), ts(a.CreatedAt))
 	if err != nil {
-		return fmt.Errorf("写告警失败: %w", err)
+		return errors.Wrap(err, "写告警失败")
 	}
 	if a.ID, err = res.LastInsertId(); err != nil {
 		return err

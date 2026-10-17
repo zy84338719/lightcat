@@ -2,8 +2,9 @@ package store
 
 import (
 	"database/sql"
-	"fmt"
 	"time"
+
+	"github.com/oekit/pkg/errors"
 )
 
 // OpticalSample 是光功率历史里的一条读数（换算后的值，单位见字段名）。
@@ -38,7 +39,7 @@ func (s *Store) InsertOpticalSample(deviceID int64, at time.Time,
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		deviceID, ts(at), nullFloat(rx), nullFloat(tx), nullFloat(temp), nullFloat(volt), nullFloat(bias), status)
 	if err != nil {
-		return fmt.Errorf("写光功率历史失败: %w", err)
+		return errors.Wrap(err, "写光功率历史失败")
 	}
 	if s.opticalHistoryDays > 0 {
 		_, _ = s.PruneOpticalHistory(at.AddDate(0, 0, -s.opticalHistoryDays))
@@ -55,7 +56,7 @@ func (s *Store) OpticalHistory(deviceID int64, limit int) ([]OpticalSample, erro
 		FROM (SELECT * FROM optical_history WHERE device_id = ? ORDER BY id DESC LIMIT ?)
 		ORDER BY id`, deviceID, limit)
 	if err != nil {
-		return nil, fmt.Errorf("读光功率历史失败: %w", err)
+		return nil, errors.Wrap(err, "读光功率历史失败")
 	}
 	defer rows.Close()
 	var out []OpticalSample
@@ -98,7 +99,7 @@ func (s *Store) RecordOpticalSample(deviceID int64, at time.Time,
 	if window > 0 {
 		txs, err := s.db.Begin()
 		if err != nil {
-			return fmt.Errorf("开始光功率合并事务失败: %w", err)
+			return errors.Wrap(err, "开始光功率合并事务失败")
 		}
 		defer txs.Rollback()
 
@@ -110,7 +111,7 @@ func (s *Store) RecordOpticalSample(deviceID int64, at time.Time,
 		case err == sql.ErrNoRows:
 			// 没有历史行：直接插入，走下面的公共路径
 		case err != nil:
-			return fmt.Errorf("读取最近光功率样本失败: %w", err)
+			return errors.Wrap(err, "读取最近光功率样本失败")
 		default:
 			// ts 列存的是字符串（与 OpticalHistory 的读法一致，用 parseTS 转回来）
 			lastAt := parseTS(tsRaw)
@@ -130,13 +131,13 @@ func (s *Store) RecordOpticalSample(deviceID int64, at time.Time,
 					WHERE id = ?`,
 					nullFloat(rx), nullFloat(tx), nullFloat(temp), nullFloat(volt), nullFloat(bias),
 					status, status, lastID); err != nil {
-					return fmt.Errorf("合并光功率历史失败: %w", err)
+					return errors.Wrap(err, "合并光功率历史失败")
 				}
 				return txs.Commit()
 			}
 		}
 		if err := txs.Commit(); err != nil {
-			return fmt.Errorf("提交光功率合并事务失败: %w", err)
+			return errors.Wrap(err, "提交光功率合并事务失败")
 		}
 	}
 	return s.InsertOpticalSample(deviceID, at, rx, tx, temp, volt, bias, status)
@@ -178,7 +179,7 @@ func (s *Store) WorstRx(limit int) ([]RxWorst, error) {
 		ORDER BY o.rx_dbm ASC, o.device_id ASC
 		LIMIT ?`, limit)
 	if err != nil {
-		return nil, fmt.Errorf("查收光最弱榜失败: %w", err)
+		return nil, errors.Wrap(err, "查收光最弱榜失败")
 	}
 	defer rows.Close()
 	var out []RxWorst

@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	stderrors "errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -289,9 +290,7 @@ func (c *Creds) Guard(next http.Handler) http.Handler {
 		// 机器端点（/api、/metrics）回 401 JSON —— 它们的服务对象是脚本与
 		// Prometheus，303 跳登录页只会让抓取方拿着一坨 HTML 当指标解析。
 		if strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/metrics" {
-			w.Header().Set("Content-Type", "application/json; charset=utf-8")
-			w.WriteHeader(http.StatusUnauthorized)
-			_, _ = w.Write([]byte(`{"error":"需要登录"}`))
+			writeJSONErrorCode(w, stderrors.New("需要登录"), http.StatusUnauthorized, CodeUnauthorized)
 			return
 		}
 		http.Redirect(w, r, panelLoginPath+"?next="+url.QueryEscape(r.URL.RequestURI()), http.StatusSeeOther)
